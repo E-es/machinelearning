@@ -6,7 +6,7 @@ using System;
 
 namespace Microsoft.ML.Runtime.Data
 {
-    // REVIEW: Since each cursor will create a channel, it would be great that the RootCursorBase takes 
+    // REVIEW: Since each cursor will create a channel, it would be great that the RootCursorBase takes
     // ownership of the channel so the derived classes don't have to.
 
     /// <summary>
@@ -54,7 +54,6 @@ namespace Microsoft.ML.Runtime.Data
         {
             if (State != CursorState.Done)
             {
-                Ch.Done();
                 Ch.Dispose();
                 Position = -1;
                 State = CursorState.Done;

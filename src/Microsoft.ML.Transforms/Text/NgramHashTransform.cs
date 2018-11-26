@@ -14,6 +14,7 @@ using Microsoft.ML.Runtime.CommandLine;
 using Microsoft.ML.Runtime.Data;
 using Microsoft.ML.Runtime.Internal.Utilities;
 using Microsoft.ML.Runtime.Model;
+using Microsoft.ML.Transforms.Text;
 
 [assembly: LoadableClass(typeof(NgramHashTransform), typeof(NgramHashTransform.Arguments), typeof(SignatureDataTransform),
     "Ngram Hash Transform", "NgramHashTransform", "NgramHash")]
@@ -21,7 +22,7 @@ using Microsoft.ML.Runtime.Model;
 [assembly: LoadableClass(typeof(NgramHashTransform), null, typeof(SignatureLoadDataTransform),
     "Ngram Hash Transform", NgramHashTransform.LoaderSignature)]
 
-namespace Microsoft.ML.Runtime.Data
+namespace Microsoft.ML.Transforms.Text
 {
     using Conditional = System.Diagnostics.ConditionalAttribute;
 
@@ -213,7 +214,7 @@ namespace Microsoft.ML.Runtime.Data
             {
                 if (kind == MetadataUtils.Kinds.SlotNames && _parent._slotNames != null && _parent._slotNames[iinfo].Length > 0)
                 {
-                    MetadataUtils.MetadataGetter<VBuffer<DvText>> getTerms = _parent.GetTerms;
+                    MetadataUtils.MetadataGetter<VBuffer<ReadOnlyMemory<char>>> getTerms = _parent.GetTerms;
                     getTerms.Marshal(iinfo, ref value);
                     return;
                 }
@@ -317,13 +318,14 @@ namespace Microsoft.ML.Runtime.Data
                 verWrittenCur: 0x00010002, // Invert hash key values, hash fix
                 verReadableCur: 0x00010002,
                 verWeCanReadBack: 0x00010002,
-                loaderSignature: LoaderSignature);
+                loaderSignature: LoaderSignature,
+                loaderAssemblyName: typeof(NgramHashTransform).Assembly.FullName);
         }
 
         private readonly Bindings _bindings;
         private readonly ColInfoEx[] _exes;
 
-        private readonly VBuffer<DvText>[] _slotNames;
+        private readonly VBuffer<ReadOnlyMemory<char>>[] _slotNames;
         private readonly ColumnType[] _slotNamesTypes;
 
         private const string RegistrationName = "NgramHash";
@@ -447,7 +449,7 @@ namespace Microsoft.ML.Runtime.Data
             return invertHashMaxCount;
         }
 
-        private void GetTerms(int iinfo, ref VBuffer<DvText> dst)
+        private void GetTerms(int iinfo, ref VBuffer<ReadOnlyMemory<char>> dst)
         {
             Host.Assert(0 <= iinfo && iinfo < _exes.Length);
             Host.Assert(_slotNames[iinfo].Length > 0);
@@ -601,7 +603,7 @@ namespace Microsoft.ML.Runtime.Data
             Host.Assert(icol >= 0);
         }
 
-        public override ISchema Schema { get { return _bindings; } }
+        public override Schema Schema => _bindings.AsSchema;
 
         protected override bool? ShouldUseParallelCursors(Func<int, bool> predicate)
         {
@@ -669,7 +671,6 @@ namespace Microsoft.ML.Runtime.Data
                         continue;
                     getters[iinfo] = MakeGetter(ch, input, iinfo);
                 }
-                ch.Done();
                 return getters;
             }
         }
@@ -697,7 +698,7 @@ namespace Microsoft.ML.Runtime.Data
             var keyCounts = _bindings.Infos[iinfo].SrcTypes.Select(
                 t => t.ItemType.KeyCount > 0 ? (uint)t.ItemType.KeyCount : uint.MaxValue).ToArray();
 
-            // REVIEW: Special casing the srcCount==1 case could potentially improve perf. 
+            // REVIEW: Special casing the srcCount==1 case could potentially improve perf.
             ValueGetter<VBuffer<Float>> del =
                 (ref VBuffer<Float> dst) =>
                 {
@@ -705,7 +706,7 @@ namespace Microsoft.ML.Runtime.Data
                     for (int i = 0; i < srcCount; i++)
                     {
                         getSrc[i](ref src);
-                        bldr.AddNgrams(ref src, i, keyCounts[i]);
+                        bldr.AddNgrams(in src, i, keyCounts[i]);
                     }
                     bldr.GetResult(ref dst);
                 };
@@ -720,7 +721,7 @@ namespace Microsoft.ML.Runtime.Data
             private readonly bool[] _active;
             private readonly Delegate[] _getters;
 
-            public ISchema Schema { get { return _bindings; } }
+            public Schema Schema => _bindings.AsSchema;
 
             public RowCursor(NgramHashTransform parent, IRowCursor input, bool[] active, FinderDecorator decorator = null)
                 : base(parent.Host, input)
@@ -930,12 +931,12 @@ namespace Microsoft.ML.Runtime.Data
                     Contracts.AssertValue(srcMap);
 
                     stringMapper =
-                        (ref NGram src, ref StringBuilder dst) =>
+                        (in NGram src, ref StringBuilder dst) =>
                         {
                             Contracts.Assert(src.ISrcCol == 0);
                             if (src.Lim == 1)
                             {
-                                srcMap(ref src.Grams[0], ref dst);
+                                srcMap(in src.Grams[0], ref dst);
                                 return;
                             }
                             ClearDst(ref dst);
@@ -943,7 +944,7 @@ namespace Microsoft.ML.Runtime.Data
                             {
                                 if (i > 0)
                                     dst.Append('|');
-                                srcMap(ref src.Grams[i], ref temp);
+                                srcMap(in src.Grams[i], ref temp);
                                 InvertHashUtils.AppendToEnd(temp, dst, ref buffer);
                             }
                         };
@@ -963,7 +964,7 @@ namespace Microsoft.ML.Runtime.Data
                     // We need to disambiguate the column name. This will be the same as the above format,
                     // just instead of "<Stuff>" it would be with "ColumnName:<Stuff>".
                     stringMapper =
-                        (ref NGram src, ref StringBuilder dst) =>
+                        (in NGram src, ref StringBuilder dst) =>
                         {
                             var srcMap = _srcTextGetters[srcIndices[src.ISrcCol]];
                             Contracts.AssertValue(srcMap);
@@ -974,7 +975,7 @@ namespace Microsoft.ML.Runtime.Data
                             {
                                 if (i > 0)
                                     dst.Append('|');
-                                srcMap(ref src.Grams[i], ref temp);
+                                srcMap(in src.Grams[i], ref temp);
                                 InvertHashUtils.AppendToEnd(temp, dst, ref buffer);
                             }
                         };
@@ -982,7 +983,7 @@ namespace Microsoft.ML.Runtime.Data
 
                 var collector = _iinfoToCollector[iinfo] = new InvertHashCollector<NGram>(
                     _parent._bindings.Types[iinfo].VectorSize, _invertHashMaxCounts[iinfo],
-                    stringMapper, EqualityComparer<NGram>.Default, (ref NGram src, ref NGram dst) => dst = src.Clone());
+                    stringMapper, EqualityComparer<NGram>.Default, (in NGram src, ref NGram dst) => dst = src.Clone());
 
                 return
                     (uint[] ngram, int lim, int icol, ref bool more) =>
@@ -990,7 +991,7 @@ namespace Microsoft.ML.Runtime.Data
                         Contracts.Assert(0 <= icol && icol < srcIndices.Length);
                         Contracts.AssertValue(_srcTextGetters[srcIndices[icol]]);
                         var result = finder(ngram, lim, icol, ref more);
-                        // For the hashing NgramIdFinder, a result of -1 indicates that 
+                        // For the hashing NgramIdFinder, a result of -1 indicates that
                         // a slot does not exist for the given ngram. We do not pass ngrams
                         // that do not have a slot to the InvertHash collector.
                         if (result != -1)
@@ -1005,9 +1006,9 @@ namespace Microsoft.ML.Runtime.Data
                     };
             }
 
-            public VBuffer<DvText>[] SlotNamesMetadata(out ColumnType[] types)
+            public VBuffer<ReadOnlyMemory<char>>[] SlotNamesMetadata(out ColumnType[] types)
             {
-                var values = new VBuffer<DvText>[_iinfoToCollector.Length];
+                var values = new VBuffer<ReadOnlyMemory<char>>[_iinfoToCollector.Length];
                 types = new ColumnType[_iinfoToCollector.Length];
                 for (int iinfo = 0; iinfo < _iinfoToCollector.Length; ++iinfo)
                 {

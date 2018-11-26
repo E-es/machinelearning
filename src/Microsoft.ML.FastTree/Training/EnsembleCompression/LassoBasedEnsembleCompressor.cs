@@ -2,16 +2,18 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using Microsoft.ML.Runtime;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
-namespace Microsoft.ML.Runtime.FastTree.Internal
+namespace Microsoft.ML.Trainers.FastTree.Internal
 {
     /// <summary>
     /// This implementation is based on:
     /// Friedman, J., Hastie, T. and Tibshirani, R. (2008) Regularization
     /// Paths for Generalized Linear Models via Coordinate Descent.
-    /// http://www-stat.stanford.edu/~hastie/Papers/glmnet.pdf
+    /// https://www-stat.stanford.edu/~hastie/Papers/glmnet.pdf
     /// </summary>
     /// <remarks>Author was Yasser Ganjisaffar during his internship.</remarks>
     public class LassoBasedEnsembleCompressor : IEnsembleCompressor<short>
@@ -164,7 +166,7 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
 
         private LassoFit GetLassoFit(IChannel ch, int maxAllowedFeaturesPerModel)
         {
-            DateTime startTime = DateTime.Now;
+            Stopwatch stopWatch = Stopwatch.StartNew();
 
             if (maxAllowedFeaturesPerModel < 0)
             {
@@ -450,8 +452,8 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
             // First lambda was infinity; fixing it
             fit.Lambdas[0] = Math.Exp(2 * Math.Log(fit.Lambdas[1]) - Math.Log(fit.Lambdas[2]));
 
-            TimeSpan duration = DateTime.Now - startTime;
-            ch.Info("Elapsed time for compression: {0}", duration);
+            stopWatch.Stop();
+            ch.Info("Elapsed time for compression: {0}", stopWatch.Elapsed);
 
             return fit;
         }

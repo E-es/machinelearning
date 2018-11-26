@@ -39,7 +39,7 @@ namespace Microsoft.ML.Runtime.Data
 
         /// <summary>
         /// Given a destination type, IRow, and column index, return a ValueGetter for the column
-        /// with a conversion to typeDst, if needed. This is a weakly typed version of 
+        /// with a conversion to typeDst, if needed. This is a weakly typed version of
         /// <see cref="GetGetterAs{TDst}"/>.
         /// </summary>
         /// <seealso cref="GetGetterAs{TDst}"/>
@@ -99,7 +99,7 @@ namespace Microsoft.ML.Runtime.Data
                 (ref TDst dst) =>
                 {
                     getter(ref src);
-                    conv(ref src, ref dst);
+                    conv(in src, ref dst);
                 };
         }
 
@@ -134,7 +134,7 @@ namespace Microsoft.ML.Runtime.Data
                 (ref StringBuilder dst) =>
                 {
                     getter(ref src);
-                    conv(ref src, ref dst);
+                    conv(in src, ref dst);
                 };
         }
 
@@ -278,7 +278,7 @@ namespace Microsoft.ML.Runtime.Data
                     // REVIEW: This would be faster if there were loops for each std conversion.
                     // Consider adding those to the Conversions class.
                     for (int i = 0; i < count; i++)
-                        conv(ref src.Values[i], ref values[i]);
+                        conv(in src.Values[i], ref values[i]);
 
                     if (!src.IsDense)
                     {
@@ -293,7 +293,7 @@ namespace Microsoft.ML.Runtime.Data
 
         /// <summary>
         /// This method returns a small helper delegate that returns whether we are at the start
-        /// of a new group, that is, we have just started, or the key-value at indicated column 
+        /// of a new group, that is, we have just started, or the key-value at indicated column
         /// is different than it was, in the last call. This is practically useful for determining
         /// group boundaries. Note that the delegate will return true on the first row.
         /// </summary>
@@ -394,16 +394,16 @@ namespace Microsoft.ML.Runtime.Data
 
             Contracts.Assert(type != NumberType.R4 && type != NumberType.R8);
 
-            // DvBool type label mapping: True -> 1, False -> 0, NA -> NaN.
+            // boolean type label mapping: True -> 1, False -> 0.
             if (type.IsBool)
             {
-                var getBoolSrc = cursor.GetGetter<DvBool>(labelIndex);
+                var getBoolSrc = cursor.GetGetter<bool>(labelIndex);
                 return
                     (ref Single dst) =>
                     {
-                        DvBool src = DvBool.NA;
+                        bool src = default;
                         getBoolSrc(ref src);
-                        dst = (Single)src;
+                        dst = Convert.ToSingle(src);
                     };
             }
 
@@ -473,8 +473,21 @@ namespace Microsoft.ML.Runtime.Data
         }
 
         /// <summary>
+        /// Fetches the value of the column by name, in the given row.
+        /// Used by the evaluators to retrieve the metrics from the results IDataView.
+        /// </summary>
+        public static T Fetch<T>(IExceptionContext ectx, IRow row, string name)
+        {
+            if (!row.Schema.TryGetColumnIndex(name, out int col))
+                throw ectx.Except($"Could not find column '{name}'");
+            T val = default;
+            row.GetGetter<T>(col)(ref val);
+            return val;
+        }
+
+        /// <summary>
         /// Given a row, returns a one-row data view. This is useful for cases where you have a row, and you
-        /// wish to use some facility normally only exposed to dataviews. (E.g., you have an <see cref="IRow"/>
+        /// wish to use some facility normally only exposed to dataviews. (For example, you have an <see cref="IRow"/>
         /// but want to save it somewhere using a <see cref="Microsoft.ML.Runtime.Data.IO.BinarySaver"/>.)
         /// Note that it is not possible for this method to ensure that the input <paramref name="row"/> does not
         /// change, so users of this convenience must take care of what they do with the input row or the data
@@ -497,7 +510,7 @@ namespace Microsoft.ML.Runtime.Data
             private readonly IRow _row;
             private readonly IHost _host; // A channel provider is required for creating the cursor.
 
-            public ISchema Schema { get { return _row.Schema; } }
+            public Schema Schema => _row.Schema;
             public bool CanShuffle { get { return true; } } // The shuffling is even uniformly IID!! :)
 
             public OneRowDataView(IHostEnvironment env, IRow row)
@@ -536,7 +549,7 @@ namespace Microsoft.ML.Runtime.Data
                 private readonly OneRowDataView _parent;
                 private readonly bool[] _active;
 
-                public ISchema Schema { get { return _parent.Schema; } }
+                public Schema Schema => _parent.Schema;
                 public override long Batch { get { return 0; } }
 
                 public Cursor(IHost host, OneRowDataView parent, bool[] active)

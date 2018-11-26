@@ -5,13 +5,19 @@
 using Microsoft.ML.Runtime;
 using Microsoft.ML.Runtime.Data;
 using Microsoft.ML.Runtime.EntryPoints;
+using Microsoft.ML.Transforms;
 
 [assembly: LoadableClass(typeof(void), typeof(SelectFeatures), null, typeof(SignatureEntryPointModule), "SelectFeatures")]
-namespace Microsoft.ML.Runtime.EntryPoints
+
+namespace Microsoft.ML.Transforms
 {
     public static class SelectFeatures
     {
-        [TlcModule.EntryPoint(Name = "Transforms.FeatureSelectorByCount", Desc = CountFeatureSelectionTransform.Summary, UserName = CountFeatureSelectionTransform.UserName)]
+        [TlcModule.EntryPoint(Name = "Transforms.FeatureSelectorByCount",
+            Desc = CountFeatureSelectionTransform.Summary,
+            UserName = CountFeatureSelectionTransform.UserName,
+            XmlInclude = new[] { @"<include file='../Microsoft.ML.Transforms/doc.xml' path='doc/members/member[@name=""CountFeatureSelection""]/*'/>",
+                                 @"<include file='../Microsoft.ML.Transforms/doc.xml' path='doc/members/example[@name=""CountFeatureSelection""]/*'/>"})]
         public static CommonOutputs.TransformOutput CountSelect(IHostEnvironment env, CountFeatureSelectionTransform.Arguments input)
         {
             Contracts.CheckValue(env, nameof(env));
@@ -23,7 +29,12 @@ namespace Microsoft.ML.Runtime.EntryPoints
             return new CommonOutputs.TransformOutput { Model = new TransformModel(env, xf, input.Data), OutputData = xf };
         }
 
-        [TlcModule.EntryPoint(Name = "Transforms.FeatureSelectorByMutualInformation", Desc = MutualInformationFeatureSelectionTransform.Summary, UserName = MutualInformationFeatureSelectionTransform.UserName, ShortName = MutualInformationFeatureSelectionTransform.ShortName)]
+        [TlcModule.EntryPoint(Name = "Transforms.FeatureSelectorByMutualInformation",
+            Desc = MutualInformationFeatureSelectionTransform.Summary,
+            UserName = MutualInformationFeatureSelectionTransform.UserName,
+            ShortName = MutualInformationFeatureSelectionTransform.ShortName,
+            XmlInclude = new[] { @"<include file='../Microsoft.ML.Transforms/doc.xml' path='doc/members/member[@name=""MutualInformationFeatureSelection""]/*'/>",
+                                 @"<include file='../Microsoft.ML.Transforms/doc.xml' path='doc/members/example[@name=""MutualInformationFeatureSelection""]/*'/>"})]
         public static CommonOutputs.TransformOutput MutualInformationSelect(IHostEnvironment env, MutualInformationFeatureSelectionTransform.Arguments input)
         {
             Contracts.CheckValue(env, nameof(env));

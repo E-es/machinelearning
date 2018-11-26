@@ -90,7 +90,7 @@ namespace Microsoft.ML.Runtime.Data
         protected readonly string ScoreCol;
         protected readonly string GroupCol;
 
-        public ISchema Schema => GetBindings();
+        public Schema Schema => GetBindings().AsSchema;
 
         public IDataView Source { get; }
 
@@ -234,7 +234,7 @@ namespace Microsoft.ML.Runtime.Data
             private readonly ValueGetter<TLabel> _labelGetter;
             private readonly ValueGetter<TScore> _scoreGetter;
 
-            public ISchema Schema { get { return _parent.GetBindings(); } }
+            public Schema Schema => _parent.Schema;
 
             public override long Batch { get { return 0; } }
 
@@ -308,7 +308,7 @@ namespace Microsoft.ML.Runtime.Data
                 if (!_newGroupInInputCursorDel())
                     return true;
 
-                // If this is the first step, we need to move next on _groupCursor. Otherwise, the position of _groupCursor is 
+                // If this is the first step, we need to move next on _groupCursor. Otherwise, the position of _groupCursor is
                 // at the start of the next group.
                 if (_groupCursor.State == CursorState.NotStarted)
                 {

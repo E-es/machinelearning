@@ -24,20 +24,20 @@ namespace Microsoft.ML.Runtime.Numeric
         {
             Contracts.Check(Utils.Size(a) == Utils.Size(b), "Arrays must have the same length");
             Contracts.Check(Utils.Size(a) > 0);
-            return SseUtils.DotProductDense(a, b, a.Length);
+            return CpuMathUtils.DotProductDense(a, b, a.Length);
         }
 
-        public static Float DotProduct(Float[] a, ref VBuffer<Float> b)
+        public static Float DotProduct(Float[] a, in VBuffer<Float> b)
         {
             Contracts.Check(Utils.Size(a) == b.Length, "Vectors must have the same dimensionality.");
             if (b.Count == 0)
                 return 0;
             if (b.IsDense)
-                return SseUtils.DotProductDense(a, b.Values, b.Length);
-            return SseUtils.DotProductSparse(a, b.Values, b.Indices, b.Count);
+                return CpuMathUtils.DotProductDense(a, b.Values, b.Length);
+            return CpuMathUtils.DotProductSparse(a, b.Values, b.Indices, b.Count);
         }
 
-        public static Float DotProduct(ref VBuffer<Float> a, ref VBuffer<Float> b)
+        public static Float DotProduct(in VBuffer<Float> a, in VBuffer<Float> b)
         {
             Contracts.Check(a.Length == b.Length, "Vectors must have the same dimensionality.");
 
@@ -47,17 +47,17 @@ namespace Microsoft.ML.Runtime.Numeric
             if (a.IsDense)
             {
                 if (b.IsDense)
-                    return SseUtils.DotProductDense(a.Values, b.Values, a.Length);
-                return SseUtils.DotProductSparse(a.Values, b.Values, b.Indices, b.Count);
+                    return CpuMathUtils.DotProductDense(a.Values, b.Values, a.Length);
+                return CpuMathUtils.DotProductSparse(a.Values, b.Values, b.Indices, b.Count);
             }
 
             if (b.IsDense)
-                return SseUtils.DotProductSparse(b.Values, a.Values, a.Indices, a.Count);
+                return CpuMathUtils.DotProductSparse(b.Values, a.Values, a.Indices, a.Count);
             return DotProductSparse(a.Values, a.Indices, 0, a.Count, b.Values, b.Indices, 0, b.Count, 0);
         }
 
         /// <summary>
-        ///  Sparsify vector A (keep at most <paramref name="top"/>+<paramref name="bottom"/> values) 
+        ///  Sparsify vector A (keep at most <paramref name="top"/>+<paramref name="bottom"/> values)
         /// and optionally rescale values to the [-1, 1] range.
         /// <param name="a">Vector to be sparsified and normalized.</param>
         /// <param name="top">How many top (positive) elements to preserve after sparsification.</param>
@@ -154,14 +154,14 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <summary>
         /// Multiplies arrays Dst *= A element by element and returns the result in <paramref name="dst"/> (Hadamard product).
         /// </summary>
-        public static void MulElementWise(ref VBuffer<Float> a, ref VBuffer<Float> dst)
+        public static void MulElementWise(in VBuffer<Float> a, ref VBuffer<Float> dst)
         {
             Contracts.Check(a.Length == dst.Length, "Vectors must have the same dimensionality.");
 
             if (a.IsDense && dst.IsDense)
-                SseUtils.MulElementWise(a.Values, dst.Values, dst.Values, a.Length);
+                CpuMathUtils.MulElementWise(a.Values, dst.Values, dst.Values, a.Length);
             else
-                VBufferUtils.ApplyWithEitherDefined(ref a, ref dst, (int ind, Float v1, ref Float v2) => { v2 *= v1; });
+                VBufferUtils.ApplyWithEitherDefined(in a, ref dst, (int ind, Float v1, ref Float v2) => { v2 *= v1; });
         }
 
         private static Float L2DistSquaredSparse(Float[] valuesA, int[] indicesA, int countA, Float[] valuesB, int[] indicesB, int countB, int length)
@@ -228,11 +228,11 @@ namespace Microsoft.ML.Runtime.Numeric
             Contracts.Assert(0 <= countB && countB <= Utils.Size(indicesB));
             Contracts.Assert(countB <= Utils.Size(valuesB));
 
-            var normA = SseUtils.SumSq(valuesA, 0, lengthA);
+            var normA = CpuMathUtils.SumSq(valuesA.AsSpan(0, lengthA));
             if (countB == 0)
                 return normA;
-            var normB = SseUtils.SumSq(valuesB, 0, countB);
-            var dotP = SseUtils.DotProductSparse(valuesA, valuesB, indicesB, countB);
+            var normB = CpuMathUtils.SumSq(valuesB.AsSpan(0, countB));
+            var dotP = CpuMathUtils.DotProductSparse(valuesA, valuesB, indicesB, countB);
             var res = normA + normB - 2 * dotP;
             return res < 0 ? 0 : res;
         }
@@ -246,7 +246,7 @@ namespace Microsoft.ML.Runtime.Numeric
 
             if (length == 0)
                 return 0;
-            return SseUtils.L2DistSquared(valuesA, valuesB, length);
+            return CpuMathUtils.L2DistSquared(valuesA, valuesB, length);
         }
 
         /// <summary>
@@ -257,7 +257,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="b">the second array (given as a VBuffer)</param>
         /// <param name="offset">offset in 'a'</param>
         /// <returns>the dot product</returns>
-        public static Float DotProductWithOffset(ref VBuffer<Float> a, int offset, ref VBuffer<Float> b)
+        public static Float DotProductWithOffset(in VBuffer<Float> a, int offset, in VBuffer<Float> b)
         {
             Contracts.Check(0 <= offset && offset <= a.Length);
             Contracts.Check(b.Length <= a.Length - offset, "VBuffer b must be no longer than a.Length - offset.");
@@ -267,8 +267,8 @@ namespace Microsoft.ML.Runtime.Numeric
             if (a.IsDense)
             {
                 if (b.IsDense)
-                    return SseUtils.DotProductDense(a.Values, offset, b.Values, b.Length);
-                return SseUtils.DotProductSparse(a.Values, offset, b.Values, b.Indices, b.Count);
+                    return CpuMathUtils.DotProductDense(a.Values.AsSpan(offset), b.Values, b.Length);
+                return CpuMathUtils.DotProductSparse(a.Values.AsSpan(offset), b.Values, b.Indices, b.Count);
             }
             else
             {
@@ -305,7 +305,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="b">the second array (given as a VBuffer)</param>
         /// <param name="offset">offset in 'a'</param>
         /// <returns>the dot product</returns>
-        public static Float DotProductWithOffset(Float[] a, int offset, ref VBuffer<Float> b)
+        public static Float DotProductWithOffset(Float[] a, int offset, in VBuffer<Float> b)
         {
             Contracts.Check(0 <= offset && offset <= a.Length);
             Contracts.Check(b.Length <= a.Length - offset, "VBuffer b must be no longer than a.Length - offset.");
@@ -314,8 +314,8 @@ namespace Microsoft.ML.Runtime.Numeric
                 return 0;
 
             if (b.IsDense)
-                return SseUtils.DotProductDense(a, offset, b.Values, b.Length);
-            return SseUtils.DotProductSparse(a, offset, b.Values, b.Indices, b.Count);
+                return CpuMathUtils.DotProductDense(a.AsSpan(offset), b.Values, b.Length);
+            return CpuMathUtils.DotProductSparse(a.AsSpan(offset), b.Values, b.Indices, b.Count);
         }
 
         private static Float DotProductSparse(Float[] aValues, int[] aIndices, int ia, int iaLim, Float[] bValues, int[] bIndices, int ib, int ibLim, int offset)
@@ -370,10 +370,10 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="a">one VBuffer</param>
         /// <param name="b">another VBuffer</param>
         /// <returns>L1 Distance from a to b</returns>
-        public static Float L1Distance(ref VBuffer<Float> a, ref VBuffer<Float> b)
+        public static Float L1Distance(in VBuffer<Float> a, in VBuffer<Float> b)
         {
             Float res = 0;
-            VBufferUtils.ForEachEitherDefined(ref a, ref b,
+            VBufferUtils.ForEachEitherDefined(in a, in b,
                 (slot, val1, val2) => res += Math.Abs(val1 - val2));
             return res;
         }
@@ -384,9 +384,9 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="a">one VBuffer</param>
         /// <param name="b">another VBuffer</param>
         /// <returns>Distance from a to b</returns>
-        public static Float Distance(ref VBuffer<Float> a, ref VBuffer<Float> b)
+        public static Float Distance(in VBuffer<Float> a, in VBuffer<Float> b)
         {
-            return MathUtils.Sqrt(L2DistSquared(ref a, ref b));
+            return MathUtils.Sqrt(L2DistSquared(in a, in b));
         }
 
         /// <summary>
@@ -395,7 +395,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="a">one VBuffer</param>
         /// <param name="b">another VBuffer</param>
         /// <returns>Distance from a to b</returns>
-        public static Float L2DistSquared(ref VBuffer<Float> a, ref VBuffer<Float> b)
+        public static Float L2DistSquared(in VBuffer<Float> a, in VBuffer<Float> b)
         {
             Contracts.Check(a.Length == b.Length, "Vectors must have the same dimensionality.");
             if (a.IsDense)
@@ -415,7 +415,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="a">The first vector, given as an array</param>
         /// <param name="b">The second vector, given as a VBuffer{Float}</param>
         /// <returns>The squared L2 distance between a and b</returns>
-        public static Float L2DistSquared(Float[] a, ref VBuffer<Float> b)
+        public static Float L2DistSquared(Float[] a, in VBuffer<Float> b)
         {
             Contracts.CheckValue(a, nameof(a));
             Contracts.Check(Utils.Size(a) == b.Length, "Vectors must have the same dimensionality.");
@@ -434,7 +434,7 @@ namespace Microsoft.ML.Runtime.Numeric
             Contracts.CheckParam(src.Length == dst.Length, nameof(dst), "Arrays must have the same dimensionality.");
             if (src.Length == 0)
                 return;
-            SseUtils.Add(src, dst, src.Length);
+            CpuMathUtils.Add(src, dst, src.Length);
         }
 
         /// <summary>
@@ -443,7 +443,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="src">Buffer to add</param>
         /// <param name="dst">Array to add to</param>
         /// <param name="c">Coefficient</param>
-        public static void AddMult(ref VBuffer<Float> src, Float[] dst, Float c)
+        public static void AddMult(in VBuffer<Float> src, Float[] dst, Float c)
         {
             Contracts.CheckValue(dst, nameof(dst));
             Contracts.CheckParam(src.Length == dst.Length, nameof(dst), "Arrays must have the same dimensionality.");
@@ -452,7 +452,7 @@ namespace Microsoft.ML.Runtime.Numeric
                 return;
 
             if (src.IsDense)
-                SseUtils.AddScale(c, src.Values, dst, src.Count);
+                CpuMathUtils.AddScale(c, src.Values, dst, src.Count);
             else
             {
                 for (int i = 0; i < src.Count; i++)
@@ -468,7 +468,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <param name="offset">The offset into <paramref name="dst"/> at which to add</param>
         /// <param name="c">Coefficient</param>
 
-        public static void AddMultWithOffset(ref VBuffer<Float> src, Float[] dst, int offset, Float c)
+        public static void AddMultWithOffset(in VBuffer<Float> src, Float[] dst, int offset, Float c)
         {
             Contracts.CheckValue(dst, nameof(dst));
             Contracts.Check(0 <= offset && offset <= dst.Length);
@@ -502,7 +502,7 @@ namespace Microsoft.ML.Runtime.Numeric
             if (c == 0)
                 return;
 
-            SseUtils.AddScale(c, src, dst, src.Length);
+            CpuMathUtils.AddScale(c, src, dst, src.Length);
         }
 
         /// <summary>
@@ -510,7 +510,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// </summary>
         public static Float Norm(Float[] a)
         {
-            return MathUtils.Sqrt(SseUtils.SumSq(a, a.Length));
+            return MathUtils.Sqrt(CpuMathUtils.SumSq(a));
         }
 
         /// <summary>
@@ -520,7 +520,7 @@ namespace Microsoft.ML.Runtime.Numeric
         {
             if (a == null || a.Length == 0)
                 return 0;
-            return SseUtils.Sum(a, a.Length);
+            return CpuMathUtils.Sum(a);
         }
 
         /// <summary>
@@ -534,7 +534,7 @@ namespace Microsoft.ML.Runtime.Numeric
                 return;
 
             if (c != 0)
-                SseUtils.Scale(c, dst, dst.Length);
+                CpuMathUtils.Scale(c, dst);
             else
                 Array.Clear(dst, 0, dst.Length);
         }

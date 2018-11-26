@@ -111,10 +111,10 @@ namespace Microsoft.ML.Runtime.Data
                 }
 
                 Contracts.Check(PosSample != null && NegSample != null, "Must call Finish() before computing AUC");
-                return ComputWeightedAucCore(out unweighted);
+                return ComputeWeightedAucCore(out unweighted);
             }
 
-            protected abstract Double ComputWeightedAucCore(out double unweighted);
+            protected abstract Double ComputeWeightedAucCore(out double unweighted);
         }
 
         protected sealed class UnweightedAucAggregator : AucAggregatorBase<Single>
@@ -124,7 +124,7 @@ namespace Microsoft.ML.Runtime.Data
             {
             }
 
-            protected override Double ComputWeightedAucCore(out Double unweighted)
+            protected override Double ComputeWeightedAucCore(out Double unweighted)
             {
                 Contracts.AssertValue(PosSample);
                 Contracts.AssertValue(NegSample);
@@ -225,7 +225,7 @@ namespace Microsoft.ML.Runtime.Data
             {
             }
 
-            protected override Double ComputWeightedAucCore(out Double unweighted)
+            protected override Double ComputeWeightedAucCore(out Double unweighted)
             {
                 Contracts.AssertValue(PosSample);
                 Contracts.AssertValue(NegSample);
@@ -408,7 +408,7 @@ namespace Microsoft.ML.Runtime.Data
 
             /// <summary>
             /// Compute the AUPRC using the "lower trapesoid" estimator, as described in the paper
-            /// <see href="http://www.ecmlpkdd2013.org/wp-content/uploads/2013/07/aucpr_2013ecml_corrected.pdf"/>.
+            /// <a href="https://www.ecmlpkdd2013.org/wp-content/uploads/2013/07/aucpr_2013ecml_corrected.pdf">https://www.ecmlpkdd2013.org/wp-content/uploads/2013/07/aucpr_2013ecml_corrected.pdf</a>.
             /// </summary>
             protected override Double ComputeWeightedAuPrcCore(out Double unweighted)
             {
@@ -482,7 +482,7 @@ namespace Microsoft.ML.Runtime.Data
 
             /// <summary>
             /// Compute the AUPRC using the "lower trapesoid" estimator, as described in the paper
-            /// <see href="http://www.ecmlpkdd2013.org/wp-content/uploads/2013/07/aucpr_2013ecml_corrected.pdf"/>.
+            /// <a href="https://www.ecmlpkdd2013.org/wp-content/uploads/2013/07/aucpr_2013ecml_corrected.pdf">https://www.ecmlpkdd2013.org/wp-content/uploads/2013/07/aucpr_2013ecml_corrected.pdf</a>.
             /// </summary>
             protected override Double ComputeWeightedAuPrcCore(out Double unweighted)
             {

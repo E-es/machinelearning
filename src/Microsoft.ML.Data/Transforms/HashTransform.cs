@@ -2,37 +2,40 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Text;
+using Microsoft.ML.Core.Data;
 using Microsoft.ML.Runtime;
 using Microsoft.ML.Runtime.CommandLine;
 using Microsoft.ML.Runtime.Data;
 using Microsoft.ML.Runtime.Internal.Utilities;
 using Microsoft.ML.Runtime.Model;
+using Microsoft.ML.Transforms.Conversions;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
 
-[assembly: LoadableClass(HashTransform.Summary, typeof(HashTransform), typeof(HashTransform.Arguments), typeof(SignatureDataTransform),
+[assembly: LoadableClass(HashTransformer.Summary, typeof(IDataTransform), typeof(HashTransformer), typeof(HashTransformer.Arguments), typeof(SignatureDataTransform),
     "Hash Transform", "HashTransform", "Hash", DocName = "transform/HashTransform.md")]
 
-[assembly: LoadableClass(HashTransform.Summary, typeof(HashTransform), null, typeof(SignatureLoadDataTransform),
-    "Hash Transform", HashTransform.LoaderSignature)]
+[assembly: LoadableClass(HashTransformer.Summary, typeof(IDataTransform), typeof(HashTransformer), null, typeof(SignatureLoadDataTransform),
+    "Hash Transform", HashTransformer.LoaderSignature)]
 
-namespace Microsoft.ML.Runtime.Data
+[assembly: LoadableClass(HashTransformer.Summary, typeof(HashTransformer), null, typeof(SignatureLoadModel),
+     "Hash Transform", HashTransformer.LoaderSignature)]
+
+[assembly: LoadableClass(typeof(IRowMapper), typeof(HashTransformer), null, typeof(SignatureLoadRowMapper),
+   "Hash Transform", HashTransformer.LoaderSignature)]
+
+namespace Microsoft.ML.Transforms.Conversions
 {
-    using Conditional = System.Diagnostics.ConditionalAttribute;
-
     /// <summary>
-    /// This transform can hash either single valued columns or vector columns. For vector columns,
-    /// it hashes each slot separately. 
+    /// This transformer can hash either single valued columns or vector columns. For vector columns,
+    /// it hashes each slot separately.
     /// It can hash either text values or key values.
     /// </summary>
-    public sealed class HashTransform : OneToOneTransformBase, ITransformTemplate
+    public sealed class HashTransformer : OneToOneTransformerBase
     {
-        public const int NumBitsMin = 1;
-        public const int NumBitsLim = 32;
-
         public sealed class Arguments
         {
             [Argument(ArgumentType.Multiple, HelpText = "New column definition(s) (optional form: name:src)", ShortName = "col",
@@ -41,18 +44,18 @@ namespace Microsoft.ML.Runtime.Data
 
             [Argument(ArgumentType.AtMostOnce, HelpText = "Number of bits to hash into. Must be between 1 and 31, inclusive",
                 ShortName = "bits", SortOrder = 2)]
-            public int HashBits = NumBitsLim - 1;
+            public int HashBits = HashingEstimator.Defaults.HashBits;
 
             [Argument(ArgumentType.AtMostOnce, HelpText = "Hashing seed")]
-            public uint Seed = 314489979;
+            public uint Seed = HashingEstimator.Defaults.Seed;
 
             [Argument(ArgumentType.AtMostOnce, HelpText = "Whether the position of each term should be included in the hash",
                 ShortName = "ord")]
-            public bool Ordered;
+            public bool Ordered = HashingEstimator.Defaults.Ordered;
 
             [Argument(ArgumentType.AtMostOnce, HelpText = "Limit the number of keys used to generate the slot name to this many. 0 means no invert hashing, -1 means no limit.",
                 ShortName = "ih")]
-            public int InvertHash;
+            public int InvertHash = HashingEstimator.Defaults.InvertHash;
         }
 
         public sealed class Column : OneToOneColumn
@@ -87,8 +90,7 @@ namespace Microsoft.ML.Runtime.Data
 
                 // We accept N:B:S where N is the new column name, B is the number of bits,
                 // and S is source column names.
-                string extra;
-                if (!base.TryParse(str, out extra))
+                if (!base.TryParse(str, out string extra))
                     return false;
                 if (extra == null)
                     return true;
@@ -112,55 +114,70 @@ namespace Microsoft.ML.Runtime.Data
             }
         }
 
-        private sealed class ColInfoEx
+        public sealed class ColumnInfo
         {
+            public readonly string Input;
+            public readonly string Output;
             public readonly int HashBits;
-            public readonly uint HashSeed;
+            public readonly uint Seed;
             public readonly bool Ordered;
+            public readonly int InvertHash;
 
-            public ColInfoEx(Arguments args, Column col)
+            /// <summary>
+            /// Describes how the transformer handles one column pair.
+            /// </summary>
+            /// <param name="input">Name of input column.</param>
+            /// <param name="output">Name of output column.</param>
+            /// <param name="hashBits">Number of bits to hash into. Must be between 1 and 31, inclusive.</param>
+            /// <param name="seed">Hashing seed.</param>
+            /// <param name="ordered">Whether the position of each term should be included in the hash.</param>
+            /// <param name="invertHash">Limit the number of keys used to generate the slot name to this many. 0 means no invert hashing, -1 means no limit.</param>
+            public ColumnInfo(string input, string output,
+                int hashBits = HashingEstimator.Defaults.HashBits,
+                uint seed = HashingEstimator.Defaults.Seed,
+                bool ordered = HashingEstimator.Defaults.Ordered,
+                int invertHash = HashingEstimator.Defaults.InvertHash)
             {
-                HashBits = col.HashBits ?? args.HashBits;
-                if (HashBits < NumBitsMin || HashBits >= NumBitsLim)
-                    throw Contracts.ExceptUserArg(nameof(args.HashBits), "Should be between {0} and {1} inclusive", NumBitsMin, NumBitsLim - 1);
-                HashSeed = col.Seed ?? args.Seed;
-                Ordered = col.Ordered ?? args.Ordered;
+                if (invertHash < -1)
+                    throw Contracts.ExceptParam(nameof(invertHash), "Value too small, must be -1 or larger");
+                if (invertHash != 0 && hashBits >= 31)
+                    throw Contracts.ExceptParam(nameof(hashBits), $"Cannot support invertHash for a {0} bit hash. 30 is the maximum possible.", hashBits);
+
+                Input = input;
+                Output = output;
+                HashBits = hashBits;
+                Seed = seed;
+                Ordered = ordered;
+                InvertHash = invertHash;
             }
 
-            public ColInfoEx(ModelLoadContext ctx)
+            internal ColumnInfo(string input, string output, ModelLoadContext ctx)
             {
+                Input = input;
+                Output = output;
                 // *** Binary format ***
                 // int: HashBits
                 // uint: HashSeed
                 // byte: Ordered
-
                 HashBits = ctx.Reader.ReadInt32();
-                Contracts.CheckDecode(NumBitsMin <= HashBits && HashBits < NumBitsLim);
-
-                HashSeed = ctx.Reader.ReadUInt32();
+                Contracts.CheckDecode(HashingEstimator.NumBitsMin <= HashBits && HashBits < HashingEstimator.NumBitsLim);
+                Seed = ctx.Reader.ReadUInt32();
                 Ordered = ctx.Reader.ReadBoolByte();
             }
 
-            public void Save(ModelSaveContext ctx)
+            internal void Save(ModelSaveContext ctx)
             {
                 // *** Binary format ***
                 // int: HashBits
                 // uint: HashSeed
                 // byte: Ordered
 
-                Contracts.Assert(NumBitsMin <= HashBits && HashBits < NumBitsLim);
+                Contracts.Assert(HashingEstimator.NumBitsMin <= HashBits && HashBits < HashingEstimator.NumBitsLim);
                 ctx.Writer.Write(HashBits);
 
-                ctx.Writer.Write(HashSeed);
+                ctx.Writer.Write(Seed);
                 ctx.Writer.WriteBoolByte(Ordered);
             }
-        }
-
-        private static string TestType(ColumnType type)
-        {
-            if (type.ItemType.IsText || type.ItemType.IsKey)
-                return null;
-            return "Expected Text or Key item type";
         }
 
         private const string RegistrationName = "Hash";
@@ -177,91 +194,85 @@ namespace Microsoft.ML.Runtime.Data
                 verWrittenCur: 0x00010002, // Invert hash key values, hash fix
                 verReadableCur: 0x00010002,
                 verWeCanReadBack: 0x00010002,
-                loaderSignature: LoaderSignature);
+                loaderSignature: LoaderSignature,
+                loaderAssemblyName: typeof(HashTransformer).Assembly.FullName);
         }
 
-        private readonly ColInfoEx[] _exes;
-        private readonly ColumnType[] _types;
-
-        private readonly VBuffer<DvText>[] _keyValues;
+        private readonly ColumnInfo[] _columns;
+        private readonly VBuffer<ReadOnlyMemory<char>>[] _keyValues;
         private readonly ColumnType[] _kvTypes;
 
-        public static HashTransform Create(IHostEnvironment env, ModelLoadContext ctx, IDataView input)
+        protected override void CheckInputColumn(ISchema inputSchema, int col, int srcCol)
         {
-            Contracts.CheckValue(env, nameof(env));
-            var h = env.Register(RegistrationName);
-            h.CheckValue(ctx, nameof(ctx));
-            h.CheckValue(input, nameof(input));
-            ctx.CheckAtModel(GetVersionInfo());
-            return h.Apply("Loading Model", ch => new HashTransform(h, ctx, input));
+            var type = inputSchema.GetColumnType(srcCol);
+            if (!HashingEstimator.IsColumnTypeValid(type))
+                throw Host.ExceptParam(nameof(inputSchema), HashingEstimator.ExpectedColumnType);
         }
 
-        private HashTransform(IHost host, ModelLoadContext ctx, IDataView input)
-            : base(host, ctx, input, TestType)
+        private static (string input, string output)[] GetColumnPairs(ColumnInfo[] columns)
         {
-            Host.AssertValue(ctx);
-
-            // *** Binary format ***
-            // <base>
-            // Exes
-
-            Host.AssertNonEmpty(Infos);
-            _exes = new ColInfoEx[Infos.Length];
-            for (int iinfo = 0; iinfo < Infos.Length; iinfo++)
-                _exes[iinfo] = new ColInfoEx(ctx);
-
-            _types = InitColumnTypes();
-
-            TextModelHelper.LoadAll(Host, ctx, Infos.Length, out _keyValues, out _kvTypes);
-            SetMetadata();
+            Contracts.CheckNonEmpty(columns, nameof(columns));
+            return columns.Select(x => (x.Input, x.Output)).ToArray();
         }
 
-        public override void Save(ModelSaveContext ctx)
+        private ColumnType GetOutputType(ISchema inputSchema, ColumnInfo column)
         {
-            Host.CheckValue(ctx, nameof(ctx));
-            ctx.CheckAtModel();
-            ctx.SetVersionInfo(GetVersionInfo());
-
-            // <prefix handled in static Create method>
-            // <base>
-            // Exes
-
-            SaveBase(ctx);
-            Host.Assert(_exes.Length == Infos.Length);
-            for (int iinfo = 0; iinfo < Infos.Length; iinfo++)
-                _exes[iinfo].Save(ctx);
-
-            TextModelHelper.SaveAll(Host, ctx, Infos.Length, _keyValues);
+            var keyCount = column.HashBits < 31 ? 1 << column.HashBits : 0;
+            inputSchema.TryGetColumnIndex(column.Input, out int srcCol);
+            var itemType = new KeyType(DataKind.U4, 0, keyCount, keyCount > 0);
+            var srcType = inputSchema.GetColumnType(srcCol);
+            if (!srcType.IsVector)
+                return itemType;
+            else
+                return new VectorType(itemType, srcType.VectorSize);
         }
 
-        public HashTransform(IHostEnvironment env, Arguments args, IDataView input)
-            : base(Contracts.CheckRef(env, nameof(env)), RegistrationName, env.CheckRef(args, nameof(args)).Column,
-                input, TestType)
+        /// <summary>
+        /// Constructor for case where you don't need to 'train' transform on data, for example, InvertHash for all columns set to zero.
+        /// </summary>
+        /// <param name="env">Host Environment.</param>
+        /// <param name="columns">Description of dataset columns and how to process them.</param>
+        public HashTransformer(IHostEnvironment env, ColumnInfo[] columns) :
+              base(Contracts.CheckRef(env, nameof(env)).Register(RegistrationName), GetColumnPairs(columns))
         {
-            if (args.HashBits < NumBitsMin || args.HashBits >= NumBitsLim)
-                throw Host.ExceptUserArg(nameof(args.HashBits), "hashBits should be between {0} and {1} inclusive", NumBitsMin, NumBitsLim - 1);
+            _columns = columns.ToArray();
+            foreach (var column in _columns)
+            {
+                if (column.InvertHash != 0)
+                    throw Host.ExceptParam(nameof(columns), $"Found colunm with {nameof(column.InvertHash)} set to non zero value, please use { nameof(HashingEstimator)} instead");
+            }
+        }
 
-            _exes = new ColInfoEx[Infos.Length];
+        internal HashTransformer(IHostEnvironment env, IDataView input, ColumnInfo[] columns) :
+            base(Contracts.CheckRef(env, nameof(env)).Register(RegistrationName), GetColumnPairs(columns))
+        {
+            _columns = columns.ToArray();
+            var types = new ColumnType[_columns.Length];
             List<int> invertIinfos = null;
             List<int> invertHashMaxCounts = null;
-            for (int iinfo = 0; iinfo < Infos.Length; iinfo++)
+            HashSet<int> sourceColumnsForInvertHash = new HashSet<int>();
+            for (int i = 0; i < _columns.Length; i++)
             {
-                _exes[iinfo] = new ColInfoEx(args, args.Column[iinfo]);
-                int invertHashMaxCount = GetAndVerifyInvertHashMaxCount(args, args.Column[iinfo], _exes[iinfo]);
+                if (!input.Schema.TryGetColumnIndex(ColumnPairs[i].input, out int srcCol))
+                    throw Host.ExceptSchemaMismatch(nameof(input), "input", ColumnPairs[i].input);
+                CheckInputColumn(input.Schema, i, srcCol);
+
+                types[i] = GetOutputType(input.Schema, _columns[i]);
+                int invertHashMaxCount;
+                if (_columns[i].InvertHash == -1)
+                    invertHashMaxCount = int.MaxValue;
+                else
+                    invertHashMaxCount = _columns[i].InvertHash;
                 if (invertHashMaxCount > 0)
                 {
-                    Utils.Add(ref invertIinfos, iinfo);
+                    Utils.Add(ref invertIinfos, i);
                     Utils.Add(ref invertHashMaxCounts, invertHashMaxCount);
+                    sourceColumnsForInvertHash.Add(srcCol);
                 }
             }
-
-            _types = InitColumnTypes();
-
-            if (Utils.Size(invertIinfos) > 0)
+            if (Utils.Size(sourceColumnsForInvertHash) > 0)
             {
-                // Build the invert hashes for all columns for which it was requested.
-                var srcs = new HashSet<int>(invertIinfos.Select(i => Infos[i].Source));
-                using (IRowCursor srcCursor = input.GetRowCursor(srcs.Contains))
+                using (IRowCursor srcCursor = input.GetRowCursor(sourceColumnsForInvertHash.Contains))
                 {
                     using (var ch = Host.Start("Invert hash building"))
                     {
@@ -270,515 +281,663 @@ namespace Microsoft.ML.Runtime.Data
                         for (int i = 0; i < helpers.Length; ++i)
                         {
                             int iinfo = invertIinfos[i];
-                            Host.Assert(_types[iinfo].ItemType.KeyCount > 0);
-                            var dstGetter = GetGetterCore(ch, srcCursor, iinfo, out disposer);
+                            Host.Assert(types[iinfo].ItemType.KeyCount > 0);
+                            var dstGetter = GetGetterCore(srcCursor, iinfo, out disposer);
                             Host.Assert(disposer == null);
-                            var ex = _exes[iinfo];
+                            var ex = _columns[iinfo];
                             var maxCount = invertHashMaxCounts[i];
-                            helpers[i] = InvertHashHelper.Create(srcCursor, Infos[iinfo], ex, maxCount, dstGetter);
+                            helpers[i] = InvertHashHelper.Create(srcCursor, ex, maxCount, dstGetter);
                         }
                         while (srcCursor.MoveNext())
                         {
                             for (int i = 0; i < helpers.Length; ++i)
                                 helpers[i].Process();
                         }
-                        _keyValues = new VBuffer<DvText>[_exes.Length];
-                        _kvTypes = new ColumnType[_exes.Length];
+                        _keyValues = new VBuffer<ReadOnlyMemory<char>>[_columns.Length];
+                        _kvTypes = new ColumnType[_columns.Length];
                         for (int i = 0; i < helpers.Length; ++i)
                         {
                             _keyValues[invertIinfos[i]] = helpers[i].GetKeyValuesMetadata();
-                            Host.Assert(_keyValues[invertIinfos[i]].Length == _types[invertIinfos[i]].ItemType.KeyCount);
+                            Host.Assert(_keyValues[invertIinfos[i]].Length == types[invertIinfos[i]].ItemType.KeyCount);
                             _kvTypes[invertIinfos[i]] = new VectorType(TextType.Instance, _keyValues[invertIinfos[i]].Length);
                         }
-                        ch.Done();
                     }
                 }
             }
-            SetMetadata();
         }
 
-        /// <summary>
-        /// Re-apply constructor.
-        /// </summary>
-        private HashTransform(IHostEnvironment env, HashTransform transform, IDataView newSource)
-            : base(env, RegistrationName, transform, newSource, TestType)
+        private Delegate GetGetterCore(IRow input, int iinfo, out Action disposer)
         {
-            _exes = transform._exes;
-            _types = InitColumnTypes();
-            _keyValues = transform._keyValues;
-            _kvTypes = transform._kvTypes;
-            SetMetadata();
-        }
-
-        public IDataTransform ApplyToData(IHostEnvironment env, IDataView newSource)
-        {
-            return new HashTransform(env, this, newSource);
-        }
-
-        private static int GetAndVerifyInvertHashMaxCount(Arguments args, Column col, ColInfoEx ex)
-        {
-            var invertHashMaxCount = col.InvertHash ?? args.InvertHash;
-            if (invertHashMaxCount != 0)
-            {
-                if (invertHashMaxCount == -1)
-                    invertHashMaxCount = int.MaxValue;
-                Contracts.CheckUserArg(invertHashMaxCount > 0, nameof(args.InvertHash), "Value too small, must be -1 or larger");
-                // If the bits is 31 or higher, we can't declare a KeyValues of the appropriate length,
-                // this requiring a VBuffer of length 1u << 31 which exceeds int.MaxValue.
-                if (ex.HashBits >= 31)
-                    throw Contracts.ExceptUserArg(nameof(args.InvertHash), "Cannot support invertHash for a {0} bit hash. 30 is the maximum possible.", ex.HashBits);
-            }
-            return invertHashMaxCount;
-        }
-
-        private ColumnType[] InitColumnTypes()
-        {
-            var types = new ColumnType[Infos.Length];
-            for (int iinfo = 0; iinfo < Infos.Length; iinfo++)
-            {
-                var keyCount = _exes[iinfo].HashBits < 31 ? 1 << _exes[iinfo].HashBits : 0;
-                var itemType = new KeyType(DataKind.U4, 0, keyCount, keyCount > 0);
-                if (!Infos[iinfo].TypeSrc.IsVector)
-                    types[iinfo] = itemType;
-                else
-                    types[iinfo] = new VectorType(itemType, Infos[iinfo].TypeSrc.VectorSize);
-            }
-            return types;
-        }
-
-        protected override ColumnType GetColumnTypeCore(int iinfo)
-        {
-            Host.Check(0 <= iinfo & iinfo < Infos.Length);
-            return _types[iinfo];
-        }
-
-        private void SetMetadata()
-        {
-            var md = Metadata;
-            for (int iinfo = 0; iinfo < Infos.Length; iinfo++)
-            {
-                using (var bldr = md.BuildMetadata(iinfo, Source.Schema, Infos[iinfo].Source,
-                    MetadataUtils.Kinds.SlotNames))
-                {
-                    if (_kvTypes != null && _kvTypes[iinfo] != null)
-                        bldr.AddGetter<VBuffer<DvText>>(MetadataUtils.Kinds.KeyValues, _kvTypes[iinfo], GetTerms);
-                }
-            }
-            md.Seal();
-        }
-
-        private void GetTerms(int iinfo, ref VBuffer<DvText> dst)
-        {
-            Host.Assert(0 <= iinfo && iinfo < Infos.Length);
-            Host.Assert(Utils.Size(_keyValues) == Infos.Length);
-            Host.Assert(_keyValues[iinfo].Length > 0);
-            _keyValues[iinfo].CopyTo(ref dst);
-        }
-
-        protected override Delegate GetGetterCore(IChannel ch, IRow input, int iinfo, out Action disposer)
-        {
-            Host.AssertValueOrNull(ch);
             Host.AssertValue(input);
-            Host.Assert(0 <= iinfo && iinfo < Infos.Length);
+            Host.Assert(0 <= iinfo && iinfo < _columns.Length);
             disposer = null;
-
-            if (!Infos[iinfo].TypeSrc.IsVector)
-                return ComposeGetterOne(input, iinfo);
-            return ComposeGetterVec(input, iinfo);
+            input.Schema.TryGetColumnIndex(_columns[iinfo].Input, out int srcCol);
+            var srcType = input.Schema.GetColumnType(srcCol);
+            if (!srcType.IsVector)
+                return ComposeGetterOne(input, iinfo, srcCol, srcType);
+            return ComposeGetterVec(input, iinfo, srcCol, srcType);
         }
 
-        /// <summary>
-        /// Getter generator for single valued inputs
-        /// </summary>
-        private ValueGetter<uint> ComposeGetterOne(IRow input, int iinfo)
-        {
-            var colType = Infos[iinfo].TypeSrc;
-            Host.Assert(colType.IsText || colType.IsKey);
+        protected override IRowMapper MakeRowMapper(ISchema schema) => new Mapper(this, Schema.Create(schema));
 
-            var mask = (1U << _exes[iinfo].HashBits) - 1;
-            uint seed = _exes[iinfo].HashSeed;
+        // Factory method for SignatureLoadModel.
+        private static HashTransformer Create(IHostEnvironment env, ModelLoadContext ctx)
+        {
+            Contracts.CheckValue(env, nameof(env));
+            var host = env.Register(RegistrationName);
+
+            host.CheckValue(ctx, nameof(ctx));
+            ctx.CheckAtModel(GetVersionInfo());
+
+            return new HashTransformer(host, ctx);
+        }
+
+        private HashTransformer(IHost host, ModelLoadContext ctx)
+          : base(host, ctx)
+        {
+            var columnsLength = ColumnPairs.Length;
+            _columns = new ColumnInfo[columnsLength];
+            for (int i = 0; i < columnsLength; i++)
+                _columns[i] = new ColumnInfo(ColumnPairs[i].input, ColumnPairs[i].output, ctx);
+            TextModelHelper.LoadAll(Host, ctx, columnsLength, out _keyValues, out _kvTypes);
+        }
+
+        public override void Save(ModelSaveContext ctx)
+        {
+            Host.CheckValue(ctx, nameof(ctx));
+
+            ctx.CheckAtModel();
+            ctx.SetVersionInfo(GetVersionInfo());
+
+            SaveColumns(ctx);
+
+            // <prefix handled in static Create method>
+            // <base>
+            // <columns>
+            Host.Assert(_columns.Length == ColumnPairs.Length);
+            foreach (var col in _columns)
+                col.Save(ctx);
+
+            TextModelHelper.SaveAll(Host, ctx, _columns.Length, _keyValues);
+        }
+
+        // Factory method for SignatureLoadDataTransform.
+        private static IDataTransform Create(IHostEnvironment env, ModelLoadContext ctx, IDataView input)
+            => Create(env, ctx).MakeDataTransform(input);
+
+        // Factory method for SignatureLoadRowMapper.
+        private static IRowMapper Create(IHostEnvironment env, ModelLoadContext ctx, ISchema inputSchema)
+            => Create(env, ctx).MakeRowMapper(inputSchema);
+
+        // Factory method for SignatureDataTransform.
+        public static IDataTransform Create(IHostEnvironment env, Arguments args, IDataView input)
+        {
+            Contracts.CheckValue(env, nameof(env));
+            env.CheckValue(args, nameof(args));
+            env.CheckValue(input, nameof(input));
+
+            env.CheckValue(args.Column, nameof(args.Column));
+            var cols = new ColumnInfo[args.Column.Length];
+            for (int i = 0; i < cols.Length; i++)
+            {
+                var item = args.Column[i];
+                var kind = item.InvertHash ?? args.InvertHash;
+                cols[i] = new ColumnInfo(item.Source ?? item.Name,
+                    item.Name,
+                    item.HashBits ?? args.HashBits,
+                    item.Seed ?? args.Seed,
+                    item.Ordered ?? args.Ordered,
+                    item.InvertHash ?? args.InvertHash);
+            };
+            return new HashTransformer(env, input, cols).MakeDataTransform(input);
+        }
+
+        #region Getters
+        private ValueGetter<uint> ComposeGetterOne(IRow input, int iinfo, int srcCol, ColumnType srcType)
+        {
+            Host.Assert(HashingEstimator.IsColumnTypeValid(srcType));
+
+            var mask = (1U << _columns[iinfo].HashBits) - 1;
+            uint seed = _columns[iinfo].Seed;
             // In case of single valued input column, hash in 0 for the slot index.
-            if (_exes[iinfo].Ordered)
+            if (_columns[iinfo].Ordered)
                 seed = Hashing.MurmurRound(seed, 0);
 
-            switch (colType.RawKind)
+            if (srcType.IsKey)
             {
-            case DataKind.Text:
-                return ComposeGetterOneCore(GetSrcGetter<DvText>(input, iinfo), seed, mask);
-            case DataKind.U1:
-                return ComposeGetterOneCore(GetSrcGetter<byte>(input, iinfo), seed, mask);
-            case DataKind.U2:
-                return ComposeGetterOneCore(GetSrcGetter<ushort>(input, iinfo), seed, mask);
-            case DataKind.U4:
-                return ComposeGetterOneCore(GetSrcGetter<uint>(input, iinfo), seed, mask);
-            default:
-                Host.Assert(colType.RawKind == DataKind.U8);
-                return ComposeGetterOneCore(GetSrcGetter<ulong>(input, iinfo), seed, mask);
+                switch (srcType.RawKind)
+                {
+                    case DataKind.U1:
+                        return MakeScalarHashGetter<byte, HashKey1>(input, srcCol, seed, mask);
+                    case DataKind.U2:
+                        return MakeScalarHashGetter<ushort, HashKey2>(input, srcCol, seed, mask);
+                    case DataKind.U4:
+                        return MakeScalarHashGetter<uint, HashKey4>(input, srcCol, seed, mask);
+                    default:
+                        Host.Assert(srcType.RawKind == DataKind.U8);
+                        return MakeScalarHashGetter<ulong, HashKey8>(input, srcCol, seed, mask);
+                }
+            }
+
+            switch (srcType.RawKind)
+            {
+                case DataKind.U1:
+                    return MakeScalarHashGetter<byte, HashU1>(input, srcCol, seed, mask);
+                case DataKind.U2:
+                    return MakeScalarHashGetter<ushort, HashU2>(input, srcCol, seed, mask);
+                case DataKind.U4:
+                    return MakeScalarHashGetter<uint, HashU4>(input, srcCol, seed, mask);
+                case DataKind.U8:
+                    return MakeScalarHashGetter<ulong, HashU8>(input, srcCol, seed, mask);
+                case DataKind.U16:
+                    return MakeScalarHashGetter<UInt128, HashU16>(input, srcCol, seed, mask);
+                case DataKind.I1:
+                    return MakeScalarHashGetter<sbyte, HashI1>(input, srcCol, seed, mask);
+                case DataKind.I2:
+                    return MakeScalarHashGetter<short, HashI2>(input, srcCol, seed, mask);
+                case DataKind.I4:
+                    return MakeScalarHashGetter<int, HashI4>(input, srcCol, seed, mask);
+                case DataKind.I8:
+                    return MakeScalarHashGetter<long, HashI8>(input, srcCol, seed, mask);
+                case DataKind.R4:
+                    return MakeScalarHashGetter<float, HashFloat>(input, srcCol, seed, mask);
+                case DataKind.R8:
+                    return MakeScalarHashGetter<double, HashDouble>(input, srcCol, seed, mask);
+                case DataKind.BL:
+                    return MakeScalarHashGetter<bool, HashBool>(input, srcCol, seed, mask);
+                default:
+                    Host.Assert(srcType.RawKind == DataKind.Text);
+                    return MakeScalarHashGetter<ReadOnlyMemory<char>, HashText>(input, srcCol, seed, mask);
             }
         }
 
-        private ValueGetter<uint> ComposeGetterOneCore(ValueGetter<DvText> getSrc, uint seed, uint mask)
+        private ValueGetter<VBuffer<uint>> ComposeGetterVec(IRow input, int iinfo, int srcCol, ColumnType srcType)
         {
-            DvText src = default(DvText);
-            return
-                (ref uint dst) =>
-                {
-                    // REVIEW: Should we verify that the key value is within the advertised KeyCount?
-                    // Values greater than KeyCount should be treated as zeros.
-                    getSrc(ref src);
-                    dst = HashCore(seed, ref src, mask);
-                };
-        }
+            Host.Assert(srcType.IsVector);
+            Host.Assert(HashingEstimator.IsColumnTypeValid(srcType.ItemType));
 
-        private ValueGetter<uint> ComposeGetterOneCore(ValueGetter<byte> getSrc, uint seed, uint mask)
-        {
-            byte src = 0;
-            return
-                (ref uint dst) =>
-                {
-                    getSrc(ref src);
-                    dst = HashCore(seed, src, mask);
-                };
-        }
-
-        private ValueGetter<uint> ComposeGetterOneCore(ValueGetter<ushort> getSrc, uint seed, uint mask)
-        {
-            ushort src = 0;
-            return
-                (ref uint dst) =>
-                {
-                    getSrc(ref src);
-                    dst = HashCore(seed, src, mask);
-                };
-        }
-
-        private ValueGetter<uint> ComposeGetterOneCore(ValueGetter<uint> getSrc, uint seed, uint mask)
-        {
-            uint src = 0;
-            return
-                (ref uint dst) =>
-                {
-                    getSrc(ref src);
-                    dst = HashCore(seed, src, mask);
-                };
-        }
-
-        private ValueGetter<uint> ComposeGetterOneCore(ValueGetter<ulong> getSrc, uint seed, uint mask)
-        {
-            ulong src = 0;
-            return
-                (ref uint dst) =>
-                {
-                    getSrc(ref src);
-                    dst = HashCore(seed, src, mask);
-                };
-        }
-
-        // This is a delegate for a function that loops over the first count elements of src, and hashes
-        // them (either with their index or without) into dst.
-        private delegate void HashLoop<TSrc>(int count, int[] indices, TSrc[] src, uint[] dst, uint seed, uint mask);
-
-        private ValueGetter<VBuffer<uint>> ComposeGetterVec(IRow input, int iinfo)
-        {
-            var colType = Infos[iinfo].TypeSrc;
-            Host.Assert(colType.IsVector);
-            Host.Assert(colType.ItemType.IsText || colType.ItemType.IsKey);
-
-            switch (colType.ItemType.RawKind)
+            if (srcType.ItemType.IsKey)
             {
-            case DataKind.Text:
-                return ComposeGetterVecCore<DvText>(input, iinfo, HashUnord, HashDense, HashSparse);
-            case DataKind.U1:
-                return ComposeGetterVecCore<byte>(input, iinfo, HashUnord, HashDense, HashSparse);
-            case DataKind.U2:
-                return ComposeGetterVecCore<ushort>(input, iinfo, HashUnord, HashDense, HashSparse);
-            case DataKind.U4:
-                return ComposeGetterVecCore<uint>(input, iinfo, HashUnord, HashDense, HashSparse);
-            default:
-                Host.Assert(colType.ItemType.RawKind == DataKind.U8);
-                return ComposeGetterVecCore<ulong>(input, iinfo, HashUnord, HashDense, HashSparse);
+                switch (srcType.ItemType.RawKind)
+                {
+                    case DataKind.U1:
+                        return ComposeGetterVecCore<byte, HashKey1>(input, iinfo, srcCol, srcType);
+                    case DataKind.U2:
+                        return ComposeGetterVecCore<ushort, HashKey2>(input, iinfo, srcCol, srcType);
+                    case DataKind.U4:
+                        return ComposeGetterVecCore<uint, HashKey4>(input, iinfo, srcCol, srcType);
+                    default:
+                        Host.Assert(srcType.ItemType.RawKind == DataKind.U8);
+                        return ComposeGetterVecCore<ulong, HashKey8>(input, iinfo, srcCol, srcType);
+                }
+            }
+
+            switch (srcType.ItemType.RawKind)
+            {
+                case DataKind.U1:
+                    return ComposeGetterVecCore<byte, HashU1>(input, iinfo, srcCol, srcType);
+                case DataKind.U2:
+                    return ComposeGetterVecCore<ushort, HashU2>(input, iinfo, srcCol, srcType);
+                case DataKind.U4:
+                    return ComposeGetterVecCore<uint, HashU4>(input, iinfo, srcCol, srcType);
+                case DataKind.U8:
+                    return ComposeGetterVecCore<ulong, HashU8>(input, iinfo, srcCol, srcType);
+                case DataKind.U16:
+                    return ComposeGetterVecCore<UInt128, HashU16>(input, iinfo, srcCol, srcType);
+                case DataKind.I1:
+                    return ComposeGetterVecCore<sbyte, HashI1>(input, iinfo, srcCol, srcType);
+                case DataKind.I2:
+                    return ComposeGetterVecCore<short, HashI2>(input, iinfo, srcCol, srcType);
+                case DataKind.I4:
+                    return ComposeGetterVecCore<int, HashI4>(input, iinfo, srcCol, srcType);
+                case DataKind.I8:
+                    return ComposeGetterVecCore<long, HashI8>(input, iinfo, srcCol, srcType);
+                case DataKind.R4:
+                    return ComposeGetterVecCore<float, HashFloat>(input, iinfo, srcCol, srcType);
+                case DataKind.R8:
+                    return ComposeGetterVecCore<double, HashDouble>(input, iinfo, srcCol, srcType);
+                case DataKind.BL:
+                    return ComposeGetterVecCore<bool, HashBool>(input, iinfo, srcCol, srcType);
+                default:
+                    Host.Assert(srcType.ItemType.RawKind == DataKind.TX);
+                    return ComposeGetterVecCore<ReadOnlyMemory<char>, HashText>(input, iinfo, srcCol, srcType);
             }
         }
 
-        private ValueGetter<VBuffer<uint>> ComposeGetterVecCore<T>(IRow input, int iinfo,
-            HashLoop<T> hasherUnord, HashLoop<T> hasherDense, HashLoop<T> hasherSparse)
+        private ValueGetter<VBuffer<uint>> ComposeGetterVecCore<T, THash>(IRow input, int iinfo, int srcCol, ColumnType srcType)
+            where THash : struct, IHasher<T>
         {
-            Host.Assert(Infos[iinfo].TypeSrc.IsVector);
-            Host.Assert(Infos[iinfo].TypeSrc.ItemType.RawType == typeof(T));
+            Host.Assert(srcType.IsVector);
+            Host.Assert(srcType.ItemType.RawType == typeof(T));
 
-            var getSrc = GetSrcGetter<VBuffer<T>>(input, iinfo);
-            var ex = _exes[iinfo];
+            var getSrc = input.GetGetter<VBuffer<T>>(srcCol);
+            var ex = _columns[iinfo];
             var mask = (1U << ex.HashBits) - 1;
-            var seed = ex.HashSeed;
-            var len = Infos[iinfo].TypeSrc.VectorSize;
-            var src = default(VBuffer<T>);
+            var seed = ex.Seed;
 
             if (!ex.Ordered)
+                return MakeVectorHashGetter<T, THash>(seed, mask, getSrc);
+            return MakeVectorOrderedHashGetter<T, THash>(seed, mask, getSrc);
+        }
+
+        #endregion
+
+        /// <summary>
+        /// The usage of this interface may seem a bit strange, but it is deliberately structured in this way.
+        /// One will note all implementors of this interface are structs, and that where used, you never use
+        /// the interface itself, but instead an implementing type. This is due to how .NET and the JIT handles
+        /// generic types that are also value types. For value types, it will actually generate new assembly
+        /// code, which will allow effectively code generation in a way that would not happen if the hasher
+        /// implementor was a class, or if the hasher implementation was just passed in with a delegate, or
+        /// the hashing logic was encapsulated as the abstract method of some class.
+        ///
+        /// In a prior time, there were methods for all possible combinations of types, scalarness, vector
+        /// sparsity/density, whether the hash was sparsity preserving or not, whether it was ordered or not.
+        /// This resulted in an explosion of methods that made the hash transform code somewhat hard to maintain.
+        /// On the other hand, the methods were fast, since they were effectively (by brute enumeration) completely
+        /// inlined, so introducing any levels of abstraction would slow things down. By doing things in this
+        /// fashion using generics over struct types, we are effectively (via the JIT) doing code generation so
+        /// things are inlined and just as fast as the explicit implementation, while making the code rather
+        /// easier to maintain.
+        /// </summary>
+        private interface IHasher<T>
+        {
+            uint HashCore(uint seed, uint mask, in T value);
+        }
+
+        private readonly struct HashFloat : IHasher<float>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in float value)
+                => float.IsNaN(value) ? 0 : (Hashing.MixHash(Hashing.MurmurRound(seed, FloatUtils.GetBits(value == 0 ? 0 : value))) & mask) + 1;
+        }
+
+        private readonly struct HashDouble : IHasher<double>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+
+            public uint HashCore(uint seed, uint mask, in double value)
             {
-                hasherDense = hasherUnord;
-                hasherSparse = hasherUnord;
+                if (double.IsNaN(value))
+                    return 0;
+
+                ulong v = FloatUtils.GetBits(value == 0 ? 0 : value);
+                var hash = Hashing.MurmurRound(seed, Utils.GetLo(v));
+                var hi = Utils.GetHi(v);
+                if (hi != 0)
+                    hash = Hashing.MurmurRound(hash, hi);
+                return (Hashing.MixHash(hash) & mask) + 1;
             }
+        }
 
-            return
-                (ref VBuffer<uint> dst) =>
+        private readonly struct HashText : IHasher<ReadOnlyMemory<char>>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in ReadOnlyMemory<char> value)
+                => value.IsEmpty ? 0 : (Hashing.MurmurHash(seed, value.Span.Trim(' ')) & mask) + 1;
+        }
+
+        private readonly struct HashKey1 : IHasher<byte>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in byte value)
+                => value == 0 ? 0 : (Hashing.MixHash(Hashing.MurmurRound(seed, value)) & mask) + 1;
+        }
+
+        private readonly struct HashKey2 : IHasher<ushort>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in ushort value)
+                => value == 0 ? 0 : (Hashing.MixHash(Hashing.MurmurRound(seed, value)) & mask) + 1;
+        }
+
+        private readonly struct HashKey4 : IHasher<uint>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in uint value)
+                => value == 0 ? 0 : (Hashing.MixHash(Hashing.MurmurRound(seed, value)) & mask) + 1;
+        }
+
+        private readonly struct HashKey8 : IHasher<ulong>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in ulong value)
+            {
+                if (value == 0)
+                    return 0;
+                var hash = Hashing.MurmurRound(seed, Utils.GetLo(value));
+                var hi = Utils.GetHi(value);
+                if (hi != 0)
+                    hash = Hashing.MurmurRound(hash, hi);
+                return (Hashing.MixHash(hash) & mask) + 1;
+            }
+        }
+
+        private readonly struct HashU1 : IHasher<byte>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in byte value)
+                => (Hashing.MixHash(Hashing.MurmurRound(seed, value)) & mask) + 1;
+        }
+
+        private readonly struct HashU2 : IHasher<ushort>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in ushort value)
+                => (Hashing.MixHash(Hashing.MurmurRound(seed, value)) & mask) + 1;
+        }
+
+        private readonly struct HashU4 : IHasher<uint>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in uint value)
+                => (Hashing.MixHash(Hashing.MurmurRound(seed, value)) & mask) + 1;
+        }
+
+        private readonly struct HashU8 : IHasher<ulong>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in ulong value)
+            {
+                var hash = Hashing.MurmurRound(seed, Utils.GetLo(value));
+                var hi = Utils.GetHi(value);
+                if (hi != 0)
+                    hash = Hashing.MurmurRound(hash, hi);
+                return (Hashing.MixHash(hash) & mask) + 1;
+            }
+        }
+
+        private readonly struct HashU16: IHasher<UInt128>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in UInt128 value)
+            {
+                var hash = Hashing.MurmurRound(seed, Utils.GetLo(value.Lo));
+                var hi = Utils.GetHi(value.Lo);
+                if (hi != 0)
+                    hash = Hashing.MurmurRound(hash, hi);
+                if (value.Hi != 0)
                 {
-                    getSrc(ref src);
-                    if (len > 0 && src.Length != len)
-                        throw Host.Except("Hash transform expected {0} slots, but got {1}", len, src.Length);
+                    hash = Hashing.MurmurRound(hash, Utils.GetLo(value.Hi));
+                    hi = Utils.GetHi(value.Hi);
+                    if (hi != 0)
+                        hash = Hashing.MurmurRound(hash, hi);
+                }
+                return (Hashing.MixHash(hash) & mask) + 1;
+            }
+        }
 
-                    var hashes = dst.Values;
-                    if (Utils.Size(hashes) < src.Count)
-                        hashes = new uint[src.Count];
+        private readonly struct HashBool : IHasher<bool>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in bool value)
+                => (Hashing.MixHash(Hashing.MurmurRound(seed, value ? 1u : 0u)) & mask) + 1;
+        }
 
-                    if (src.IsDense)
-                    {
-                        hasherDense(src.Count, null, src.Values, hashes, seed, mask);
-                        dst = new VBuffer<uint>(src.Length, hashes, dst.Indices);
-                        return;
-                    }
+        private readonly struct HashI1 : IHasher<sbyte>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in sbyte value)
+                => (Hashing.MixHash(Hashing.MurmurRound(seed, (uint)value)) & mask) + 1;
+        }
 
-                    hasherSparse(src.Count, src.Indices, src.Values, hashes, seed, mask);
-                    var indices = dst.Indices;
-                    if (src.Count > 0)
-                    {
-                        if (Utils.Size(indices) < src.Count)
-                            indices = new int[src.Count];
-                        Array.Copy(src.Indices, indices, src.Count);
-                    }
-                    dst = new VBuffer<uint>(src.Length, src.Count, hashes, indices);
+        private readonly struct HashI2 : IHasher<short>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in short value)
+                => (Hashing.MixHash(Hashing.MurmurRound(seed, (uint)value)) & mask) + 1;
+        }
+
+        private readonly struct HashI4 : IHasher<int>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in int value)
+                => (Hashing.MixHash(Hashing.MurmurRound(seed, (uint)value)) & mask) + 1;
+        }
+
+        private readonly struct HashI8 : IHasher<long>
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public uint HashCore(uint seed, uint mask, in long value)
+            {
+                var hash = Hashing.MurmurRound(seed, Utils.GetLo((ulong)value));
+                var hi = Utils.GetHi((ulong)value);
+                if (hi != 0)
+                    hash = Hashing.MurmurRound(hash, hi);
+                return (Hashing.MixHash(hash) & mask) + 1;
+            }
+        }
+
+        private static ValueGetter<uint> MakeScalarHashGetter<T, THash>(IRow input, int srcCol, uint seed, uint mask)
+            where THash : struct, IHasher<T>
+        {
+            Contracts.Assert(Utils.IsPowerOfTwo(mask + 1));
+            Contracts.AssertValue(input);
+            Contracts.Assert(0 <= srcCol && srcCol < input.Schema.ColumnCount);
+            Contracts.Assert(input.Schema.GetColumnType(srcCol).RawType == typeof(T));
+
+            var srcGetter = input.GetGetter<T>(srcCol);
+            T src = default;
+            THash hasher = default;
+            return (ref uint dst) =>
+                {
+                    srcGetter(ref src);
+                    dst = hasher.HashCore(seed, mask, src);
                 };
         }
 
-#region Core Hash functions, with and without index
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint HashCore(uint seed, ref DvText value, uint mask)
+        private static ValueGetter<VBuffer<uint>> MakeVectorHashGetter<T, THash>(uint seed, uint mask, ValueGetter<VBuffer<T>> srcGetter)
+            where THash : struct, IHasher<T>
         {
             Contracts.Assert(Utils.IsPowerOfTwo(mask + 1));
-            if (!value.HasChars)
-                return 0;
-            return (value.Trim().Hash(seed) & mask) + 1;
+            Contracts.AssertValue(srcGetter);
+            VBuffer<T> src = default;
+            THash hasher = default;
+
+            // Determine whether this transformation is sparsity preserving, or not. It is sparsity preserving
+            // if the default of T maps to the "missing" key value, that is, 0.
+            uint defaultHash = hasher.HashCore(seed, mask, default);
+            if (defaultHash == 0)
+            {
+                // It is sparsity preserving.
+                return (ref VBuffer<uint> dst) =>
+                {
+                    srcGetter(ref src);
+                    int[] indices = dst.Indices;
+                    if (src.Count == 0)
+                    {
+                        dst = new VBuffer<uint>(src.Length, 0, dst.Values, dst.Indices);
+                        return;
+                    }
+                    if (!src.IsDense)
+                    {
+                        Utils.EnsureSize(ref indices, src.Count, keepOld: false);
+                        Array.Copy(src.Indices, 0, indices, 0, src.Count);
+                    }
+                    var values = dst.Values;
+                    Utils.EnsureSize(ref values, src.Count, keepOld: false);
+                    var srcValuesSpan = src.Values.AsSpan(0, src.Count);
+                    for (int i = 0; i < srcValuesSpan.Length; ++i)
+                        values[i] = hasher.HashCore(seed, mask, srcValuesSpan[i]);
+                    dst = new VBuffer<uint>(src.Length, src.Count, values, indices);
+                };
+            }
+            // It is not sparsity preserving.
+            return (ref VBuffer<uint> dst) =>
+            {
+                srcGetter(ref src);
+                uint[] values = dst.Values;
+                Utils.EnsureSize(ref values, src.Length, keepOld: false);
+                var srcValuesSpan = src.Values.AsSpan(0, src.Count);
+                if (src.IsDense)
+                {
+                    for (int i = 0; i < srcValuesSpan.Length; ++i)
+                        values[i] = hasher.HashCore(seed, mask, srcValuesSpan[i]);
+                }
+                else
+                {
+                    // First fill in the values of the destination. This strategy assumes, of course,
+                    // that it is more performant to initialize then fill in the exceptional (non-sparse)
+                    // values, rather than having complicated logic to do a simultaneous traversal of the
+                    // sparse vs. dense array.
+                    for (int i = 0; i < src.Length; ++i)
+                        values[i] = defaultHash;
+                    // Next overwrite the values in the explicit entries.
+                    for (int i = 0; i < srcValuesSpan.Length; ++i)
+                        values[src.Indices[i]] = hasher.HashCore(seed, mask, srcValuesSpan[i]);
+                }
+                dst = new VBuffer<uint>(src.Length, values, dst.Indices);
+            };
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint HashCore(uint seed, ref DvText value, int i, uint mask)
+        private static ValueGetter<VBuffer<uint>> MakeVectorOrderedHashGetter<T, THash>(uint seed, uint mask, ValueGetter<VBuffer<T>> srcGetter)
+            where THash : struct, IHasher<T>
         {
             Contracts.Assert(Utils.IsPowerOfTwo(mask + 1));
-            if (!value.HasChars)
-                return 0;
-            return (value.Trim().Hash(Hashing.MurmurRound(seed, (uint)i)) & mask) + 1;
+            Contracts.AssertValue(srcGetter);
+            VBuffer<T> src = default;
+            THash hasher = default;
+
+            // Determine whether this transformation is sparsity preserving, or not. It is sparsity preserving
+            // if the default of T maps to the "missing" key value, that is, 0.
+            uint defaultHash = hasher.HashCore(seed, mask, default);
+            if (defaultHash == 0)
+            {
+                // It is sparsity preserving.
+                return (ref VBuffer<uint> dst) =>
+                {
+                    srcGetter(ref src);
+                    int[] indices = dst.Indices;
+                    if (src.Count == 0)
+                    {
+                        dst = new VBuffer<uint>(src.Length, 0, dst.Values, dst.Indices);
+                        return;
+                    }
+                    if (!src.IsDense)
+                    {
+                        Utils.EnsureSize(ref indices, src.Count, keepOld: false);
+                        Array.Copy(src.Indices, 0, indices, 0, src.Count);
+                    }
+                    var values = dst.Values;
+                    Utils.EnsureSize(ref values, src.Count, keepOld: false);
+                    var srcValuesSpan = src.Values.AsSpan(0, src.Count);
+                    if (src.IsDense)
+                    {
+                        for (int i = 0; i < srcValuesSpan.Length; ++i)
+                            values[i] = hasher.HashCore(Hashing.MurmurRound(seed, (uint)i), mask, srcValuesSpan[i]);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < srcValuesSpan.Length; ++i)
+                            values[i] = hasher.HashCore(Hashing.MurmurRound(seed, (uint)src.Indices[i]), mask, srcValuesSpan[i]);
+                    }
+                    dst = new VBuffer<uint>(src.Length, src.Count, values, indices);
+                };
+            }
+            // It is not sparsity preserving.
+            return (ref VBuffer<uint> dst) =>
+            {
+                srcGetter(ref src);
+                uint[] values = dst.Values;
+                Utils.EnsureSize(ref values, src.Length, keepOld: false);
+                var srcValuesSpan = src.Values.AsSpan(0, src.Count);
+                if (src.IsDense)
+                {
+                    for (int i = 0; i < srcValuesSpan.Length; ++i)
+                        values[i] = hasher.HashCore(Hashing.MurmurRound(seed, (uint)i), mask, srcValuesSpan[i]);
+                }
+                else
+                {
+                    int j = 0;
+                    for (int i = 0; i < src.Length; i++)
+                    {
+                        uint indexSeed = Hashing.MurmurRound(seed, (uint)i);
+                        if (src.Count <= j || src.Indices[j] > i)
+                            values[i] = hasher.HashCore(indexSeed, mask, default);
+                        else if (src.Indices[j] == i)
+                            values[i] = hasher.HashCore(indexSeed, mask, srcValuesSpan[j++]);
+                        else
+                            Contracts.Assert(false, "this should have never happened.");
+                    }
+                }
+                dst = new VBuffer<uint>(src.Length, values, dst.Indices);
+            };
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint HashCore(uint seed, uint value, uint mask)
+        private sealed class Mapper : MapperBase
         {
-            Contracts.Assert(Utils.IsPowerOfTwo(mask + 1));
-            if (value == 0)
-                return 0;
-            return (Hashing.MixHash(Hashing.MurmurRound(seed, value)) & mask) + 1;
+            private sealed class ColInfo
+            {
+                public readonly string Name;
+                public readonly string Source;
+                public readonly ColumnType TypeSrc;
+
+                public ColInfo(string name, string source, ColumnType type)
+                {
+                    Name = name;
+                    Source = source;
+                    TypeSrc = type;
+                }
+            }
+
+            private readonly ColumnType[] _types;
+            private readonly HashTransformer _parent;
+
+            public Mapper(HashTransformer parent, Schema inputSchema)
+                : base(parent.Host.Register(nameof(Mapper)), parent, inputSchema)
+            {
+                _parent = parent;
+                _types = new ColumnType[_parent._columns.Length];
+                for (int i = 0; i < _types.Length; i++)
+                    _types[i] = _parent.GetOutputType(inputSchema, _parent._columns[i]);
+            }
+
+            public override Schema.Column[] GetOutputColumns()
+            {
+                var result = new Schema.Column[_parent.ColumnPairs.Length];
+                for (int i = 0; i < _parent.ColumnPairs.Length; i++)
+                {
+                    InputSchema.TryGetColumnIndex(_parent.ColumnPairs[i].input, out int colIndex);
+                    var meta = new Schema.Metadata.Builder();
+
+                    meta.Add(InputSchema[colIndex].Metadata, name => name == MetadataUtils.Kinds.SlotNames);
+
+                    if (_parent._kvTypes != null && _parent._kvTypes[i] != null)
+                        AddMetaKeyValues(i, meta);
+                    result[i] = new Schema.Column(_parent.ColumnPairs[i].output, _types[i], meta.GetMetadata());
+                }
+                return result;
+            }
+            private void AddMetaKeyValues(int i, Schema.Metadata.Builder builder)
+            {
+                ValueGetter<VBuffer<ReadOnlyMemory<char>>> getter = (ref VBuffer<ReadOnlyMemory<char>> dst) =>
+                {
+                    _parent._keyValues[i].CopyTo(ref dst);
+                };
+                builder.AddKeyValues(_parent._kvTypes[i].VectorSize, _parent._kvTypes[i].ItemType.AsPrimitive, getter);
+            }
+
+            protected override Delegate MakeGetter(IRow input, int iinfo, out Action disposer) => _parent.GetGetterCore(input, iinfo, out disposer);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint HashCore(uint seed, uint value, int i, uint mask)
-        {
-            Contracts.Assert(Utils.IsPowerOfTwo(mask + 1));
-            if (value == 0)
-                return 0;
-            return (Hashing.MixHash(Hashing.MurmurRound(Hashing.MurmurRound(seed, (uint)i), value)) & mask) + 1;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint HashCore(uint seed, ulong value, uint mask)
-        {
-            // If the high word is zero, this should produce the same value as the uint version.
-            Contracts.Assert(Utils.IsPowerOfTwo(mask + 1));
-
-            if (value == 0)
-                return 0;
-
-            var hash = Hashing.MurmurRound(seed, Utils.GetLo(value));
-            var hi = Utils.GetHi(value);
-            if (hi != 0)
-                hash = Hashing.MurmurRound(hash, hi);
-            return (Hashing.MixHash(hash) & mask) + 1;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static uint HashCore(uint seed, ulong value, int i, uint mask)
-        {
-            // If the high word is zero, this should produce the same value as the uint version.
-            Contracts.Assert(Utils.IsPowerOfTwo(mask + 1));
-            var lo = Utils.GetLo(value);
-            var hi = Utils.GetHi(value);
-            if (lo == 0 && hi == 0)
-                return 0;
-            var hash = Hashing.MurmurRound(Hashing.MurmurRound(seed, (uint)i), lo);
-            if (hi != 0)
-                hash = Hashing.MurmurRound(hash, hi);
-            return (Hashing.MixHash(hash) & mask) + 1;
-        }
-#endregion Core Hash functions, with and without index
-
-#region Unordered Loop: ignore indices
-        private static void HashUnord(int count, int[] indices, DvText[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, ref src[i], mask);
-        }
-
-        private static void HashUnord(int count, int[] indices, byte[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], mask);
-        }
-
-        private static void HashUnord(int count, int[] indices, ushort[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], mask);
-        }
-
-        private static void HashUnord(int count, int[] indices, uint[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], mask);
-        }
-
-        private static void HashUnord(int count, int[] indices, ulong[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], mask);
-        }
-#endregion Unordered Loop: ignore indices
-
-#region Dense Loop: ignore indices
-        private static void HashDense(int count, int[] indices, DvText[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, ref src[i], i, mask);
-        }
-
-        private static void HashDense(int count, int[] indices, byte[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], i, mask);
-        }
-
-        private static void HashDense(int count, int[] indices, ushort[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], i, mask);
-        }
-
-        private static void HashDense(int count, int[] indices, uint[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], i, mask);
-        }
-
-        private static void HashDense(int count, int[] indices, ulong[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], i, mask);
-        }
-#endregion Dense Loop: ignore indices
-
-#region Sparse Loop: use indices
-        private static void HashSparse(int count, int[] indices, DvText[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-            Contracts.Assert(count <= Utils.Size(indices));
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, ref src[i], indices[i], mask);
-        }
-
-        private static void HashSparse(int count, int[] indices, byte[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-            Contracts.Assert(count <= Utils.Size(indices));
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], indices[i], mask);
-        }
-
-        private static void HashSparse(int count, int[] indices, ushort[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-            Contracts.Assert(count <= Utils.Size(indices));
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], indices[i], mask);
-        }
-
-        private static void HashSparse(int count, int[] indices, uint[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-            Contracts.Assert(count <= Utils.Size(indices));
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], indices[i], mask);
-        }
-
-        private static void HashSparse(int count, int[] indices, ulong[] src, uint[] dst, uint seed, uint mask)
-        {
-            AssertValid(count, src, dst);
-            Contracts.Assert(count <= Utils.Size(indices));
-
-            for (int i = 0; i < count; i++)
-                dst[i] = HashCore(seed, src[i], indices[i], mask);
-        }
-
-#endregion Sparse Loop: use indices
-
-        [Conditional("DEBUG")]
-        private static void AssertValid<T>(int count, T[] src, uint[] dst)
-        {
-            Contracts.Assert(count >= 0);
-            Contracts.Assert(count <= Utils.Size(src));
-            Contracts.Assert(count <= Utils.Size(dst));
-        }
-
-        /// <summary>
-        /// This is a utility class to acquire and build the inverse hash to populate
-        /// KeyValues metadata.
-        /// </summary>
         private abstract class InvertHashHelper
         {
             protected readonly IRow Row;
             private readonly bool _includeSlot;
-            private readonly ColInfo _info;
-            private readonly ColInfoEx _ex;
+            private readonly ColumnInfo _ex;
+            private readonly ColumnType _srcType;
+            private readonly int _srcCol;
 
-            private InvertHashHelper(IRow row, ColInfo info, ColInfoEx ex)
+            private InvertHashHelper(IRow row, ColumnInfo ex)
             {
                 Contracts.AssertValue(row);
-                Contracts.AssertValue(info);
-
                 Row = row;
-                _info = info;
+                row.Schema.TryGetColumnIndex(ex.Input, out int srcCol);
+                _srcCol = srcCol;
+                _srcType = row.Schema.GetColumnType(srcCol);
                 _ex = ex;
                 // If this is a vector and ordered, then we must include the slot as part of the representation.
-                _includeSlot = _info.TypeSrc.IsVector && _ex.Ordered;
+                _includeSlot = _srcType.IsVector && _ex.Ordered;
             }
 
             /// <summary>
@@ -787,18 +946,18 @@ namespace Microsoft.ML.Runtime.Data
             /// the row.
             /// </summary>
             /// <param name="row">The input source row, from which the hashed values can be fetched</param>
-            /// <param name="info">The column info, describing the source</param>
             /// <param name="ex">The extra column info</param>
-            /// <param name="invertHashMaxCount">The number of input hashed values to accumulate per output hash value</param>
+            /// <param name="invertHashMaxCount">The number of input hashed valuPres to accumulate per output hash value</param>
             /// <param name="dstGetter">A hash getter, built on top of <paramref name="row"/>.</param>
-            public static InvertHashHelper Create(IRow row, ColInfo info, ColInfoEx ex, int invertHashMaxCount, Delegate dstGetter)
+            public static InvertHashHelper Create(IRow row, ColumnInfo ex, int invertHashMaxCount, Delegate dstGetter)
             {
-                ColumnType typeSrc = info.TypeSrc;
+                row.Schema.TryGetColumnIndex(ex.Input, out int srcCol);
+                ColumnType typeSrc = row.Schema.GetColumnType(srcCol);
                 Type t = typeSrc.IsVector ? (ex.Ordered ? typeof(ImplVecOrdered<>) : typeof(ImplVec<>)) : typeof(ImplOne<>);
                 t = t.MakeGenericType(typeSrc.ItemType.RawType);
-                var consTypes = new Type[] { typeof(IRow), typeof(OneToOneTransformBase.ColInfo), typeof(ColInfoEx), typeof(int), typeof(Delegate) };
+                var consTypes = new Type[] { typeof(IRow), typeof(ColumnInfo), typeof(int), typeof(Delegate) };
                 var constructorInfo = t.GetConstructor(consTypes);
-                return (InvertHashHelper)constructorInfo.Invoke(new object[] { row, info, ex, invertHashMaxCount, dstGetter });
+                return (InvertHashHelper)constructorInfo.Invoke(new object[] { row, ex, invertHashMaxCount, dstGetter });
             }
 
             /// <summary>
@@ -807,9 +966,9 @@ namespace Microsoft.ML.Runtime.Data
             /// </summary>
             public abstract void Process();
 
-            public abstract VBuffer<DvText> GetKeyValuesMetadata();
+            public abstract VBuffer<ReadOnlyMemory<char>> GetKeyValuesMetadata();
 
-            private sealed class TextEqualityComparer : IEqualityComparer<DvText>
+            private sealed class TextEqualityComparer : IEqualityComparer<ReadOnlyMemory<char>>
             {
                 // REVIEW: Is this sufficiently useful? Should we be using term map, instead?
                 private readonly uint _seed;
@@ -819,16 +978,13 @@ namespace Microsoft.ML.Runtime.Data
                     _seed = seed;
                 }
 
-                public bool Equals(DvText x, DvText y)
-                {
-                    return x.Equals(y);
-                }
+                public bool Equals(ReadOnlyMemory<char> x, ReadOnlyMemory<char> y) => x.Span.SequenceEqual(y.Span);
 
-                public int GetHashCode(DvText obj)
+                public int GetHashCode(ReadOnlyMemory<char> obj)
                 {
-                    if (!obj.HasChars)
+                    if (obj.IsEmpty)
                         return 0;
-                    return (int)obj.Trim().Hash(_seed) + 1;
+                    return (int)Hashing.MurmurHash(_seed, obj.Span.Trim(' ')) + 1;
                 }
             }
 
@@ -854,15 +1010,15 @@ namespace Microsoft.ML.Runtime.Data
 
             private IEqualityComparer<T> GetSimpleComparer<T>()
             {
-                Contracts.Assert(_info.TypeSrc.ItemType.RawType == typeof(T));
-                if (typeof(T) == typeof(DvText))
+                Contracts.Assert(_srcType.ItemType.RawType == typeof(T));
+                if (typeof(T) == typeof(ReadOnlyMemory<char>))
                 {
                     // We are hashing twice, once to assign to the slot, and then again,
                     // to build a set of encountered elements. Obviously we cannot use the
                     // same seed used to assign to a slot, or otherwise this per-slot hash
                     // would have a lot of collisions. We ensure that we have different
                     // hash function by inverting the seed's bits.
-                    var c = new TextEqualityComparer(~_ex.HashSeed);
+                    var c = new TextEqualityComparer(~_ex.Seed);
                     return c as IEqualityComparer<T>;
                 }
                 // I assume I hope correctly that the default .NET hash function for uint
@@ -876,11 +1032,10 @@ namespace Microsoft.ML.Runtime.Data
             {
                 protected readonly InvertHashCollector<T> Collector;
 
-                protected Impl(IRow row, ColInfo info, ColInfoEx ex, int invertHashMaxCount)
-                    : base(row, info, ex)
+                protected Impl(IRow row, ColumnInfo ex, int invertHashMaxCount)
+                    : base(row, ex)
                 {
                     Contracts.AssertValue(row);
-                    Contracts.AssertValue(info);
                     Contracts.AssertValue(ex);
 
                     Collector = new InvertHashCollector<T>(1 << ex.HashBits, invertHashMaxCount, GetTextMap(), GetComparer());
@@ -888,7 +1043,7 @@ namespace Microsoft.ML.Runtime.Data
 
                 protected virtual ValueMapper<T, StringBuilder> GetTextMap()
                 {
-                    return InvertHashUtils.GetSimpleMapper<T>(Row.Schema, _info.Source);
+                    return InvertHashUtils.GetSimpleMapper<T>(Row.Schema, _srcCol);
                 }
 
                 protected virtual IEqualityComparer<T> GetComparer()
@@ -896,7 +1051,7 @@ namespace Microsoft.ML.Runtime.Data
                     return GetSimpleComparer<T>();
                 }
 
-                public override VBuffer<DvText> GetKeyValuesMetadata()
+                public override VBuffer<ReadOnlyMemory<char>> GetKeyValuesMetadata()
                 {
                     return Collector.GetMetadata();
                 }
@@ -910,10 +1065,10 @@ namespace Microsoft.ML.Runtime.Data
                 private T _value;
                 private uint _hash;
 
-                public ImplOne(IRow row, OneToOneTransformBase.ColInfo info, ColInfoEx ex, int invertHashMaxCount, Delegate dstGetter)
-                    : base(row, info, ex, invertHashMaxCount)
+                public ImplOne(IRow row, ColumnInfo ex, int invertHashMaxCount, Delegate dstGetter)
+                    : base(row, ex, invertHashMaxCount)
                 {
-                    _srcGetter = Row.GetGetter<T>(_info.Source);
+                    _srcGetter = Row.GetGetter<T>(_srcCol);
                     _dstGetter = dstGetter as ValueGetter<uint>;
                     Contracts.AssertValue(_dstGetter);
                 }
@@ -944,10 +1099,10 @@ namespace Microsoft.ML.Runtime.Data
                 private VBuffer<T> _value;
                 private VBuffer<uint> _hash;
 
-                public ImplVec(IRow row, OneToOneTransformBase.ColInfo info, ColInfoEx ex, int invertHashMaxCount, Delegate dstGetter)
-                    : base(row, info, ex, invertHashMaxCount)
+                public ImplVec(IRow row, ColumnInfo ex, int invertHashMaxCount, Delegate dstGetter)
+                    : base(row, ex, invertHashMaxCount)
                 {
-                    _srcGetter = Row.GetGetter<VBuffer<T>>(_info.Source);
+                    _srcGetter = Row.GetGetter<VBuffer<T>>(_srcCol);
                     _dstGetter = dstGetter as ValueGetter<VBuffer<uint>>;
                     Contracts.AssertValue(_dstGetter);
                 }
@@ -973,17 +1128,17 @@ namespace Microsoft.ML.Runtime.Data
                 private VBuffer<T> _value;
                 private VBuffer<uint> _hash;
 
-                public ImplVecOrdered(IRow row, OneToOneTransformBase.ColInfo info, ColInfoEx ex, int invertHashMaxCount, Delegate dstGetter)
-                    : base(row, info, ex, invertHashMaxCount)
+                public ImplVecOrdered(IRow row, ColumnInfo ex, int invertHashMaxCount, Delegate dstGetter)
+                    : base(row, ex, invertHashMaxCount)
                 {
-                    _srcGetter = Row.GetGetter<VBuffer<T>>(_info.Source);
+                    _srcGetter = Row.GetGetter<VBuffer<T>>(_srcCol);
                     _dstGetter = dstGetter as ValueGetter<VBuffer<uint>>;
                     Contracts.AssertValue(_dstGetter);
                 }
 
                 protected override ValueMapper<KeyValuePair<int, T>, StringBuilder> GetTextMap()
                 {
-                    var simple = InvertHashUtils.GetSimpleMapper<T>(Row.Schema, _info.Source);
+                    var simple = InvertHashUtils.GetSimpleMapper<T>(Row.Schema, _srcCol);
                     return InvertHashUtils.GetPairMapper(simple);
                 }
 
@@ -1012,6 +1167,82 @@ namespace Microsoft.ML.Runtime.Data
                     }
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Estimator for <see cref="HashTransformer"/>
+    /// </summary>
+    public sealed class HashingEstimator : IEstimator<HashTransformer>
+    {
+        internal const int NumBitsMin = 1;
+        internal const int NumBitsLim = 32;
+
+        internal static class Defaults
+        {
+            public const int HashBits = NumBitsLim - 1;
+            public const uint Seed = 314489979;
+            public const bool Ordered = false;
+            public const int InvertHash = 0;
+        }
+
+        private readonly IHost _host;
+        private readonly HashTransformer.ColumnInfo[] _columns;
+
+        internal static bool IsColumnTypeValid(ColumnType type)
+        {
+            var itemType = type.ItemType;
+            return itemType.IsText || itemType.IsKey || itemType.IsNumber || itemType.IsBool;
+        }
+
+        internal const string ExpectedColumnType = "Expected Text, Key, numeric or Boolean item type";
+
+        /// <summary>
+        /// Initializes a new instance of <see cref="HashingEstimator"/>.
+        /// </summary>
+        /// <param name="env">Host Environment.</param>
+        /// <param name="inputColumn">Name of the column to be transformed.</param>
+        /// <param name="outputColumn">Name of the output column. If this is null '<paramref name="inputColumn"/>' will be used.</param>
+        /// <param name="hashBits">Number of bits to hash into. Must be between 1 and 31, inclusive.</param>
+        /// <param name="invertHash">Limit the number of keys used to generate the slot name to this many. 0 means no invert hashing, -1 means no limit.</param>
+        public HashingEstimator(IHostEnvironment env, string inputColumn, string outputColumn = null,
+            int hashBits = Defaults.HashBits, int invertHash = Defaults.InvertHash)
+            : this(env, new HashTransformer.ColumnInfo(inputColumn, outputColumn ?? inputColumn, hashBits: hashBits, invertHash: invertHash))
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of <see cref="HashingEstimator"/>.
+        /// </summary>
+        /// <param name="env">Host Environment.</param>
+        /// <param name="columns">Description of dataset columns and how to process them.</param>
+        public HashingEstimator(IHostEnvironment env, params HashTransformer.ColumnInfo[] columns)
+        {
+            Contracts.CheckValue(env, nameof(env));
+            _host = env.Register(nameof(HashingEstimator));
+            _columns = columns.ToArray();
+        }
+
+        public HashTransformer Fit(IDataView input) => new HashTransformer(_host, input, _columns);
+
+        public SchemaShape GetOutputSchema(SchemaShape inputSchema)
+        {
+            _host.CheckValue(inputSchema, nameof(inputSchema));
+            var result = inputSchema.Columns.ToDictionary(x => x.Name);
+            foreach (var colInfo in _columns)
+            {
+                if (!inputSchema.TryFindColumn(colInfo.Input, out var col))
+                    throw _host.ExceptSchemaMismatch(nameof(inputSchema), "input", colInfo.Input);
+                if (!IsColumnTypeValid(col.ItemType))
+                    throw _host.ExceptParam(nameof(inputSchema), ExpectedColumnType);
+                var metadata = new List<SchemaShape.Column>();
+                if (col.Metadata.TryFindColumn(MetadataUtils.Kinds.SlotNames, out var slotMeta))
+                    metadata.Add(slotMeta);
+                if (colInfo.InvertHash != 0)
+                    metadata.Add(new SchemaShape.Column(MetadataUtils.Kinds.KeyValues, SchemaShape.Column.VectorKind.Vector, TextType.Instance, false));
+                result[colInfo.Output] = new SchemaShape.Column(colInfo.Output, col.ItemType.IsVector ? SchemaShape.Column.VectorKind.Vector : SchemaShape.Column.VectorKind.Scalar, NumberType.U4, true, new SchemaShape(metadata));
+            }
+            return new SchemaShape(result.Values);
         }
     }
 }

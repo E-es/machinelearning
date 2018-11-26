@@ -3,18 +3,17 @@
 // See the LICENSE file in the project root for more information.
 
 // REVIEW: As soon as we stop writing sizeof(Float), or when we retire the double builds, we can remove this.
-using Float = System.Single;
-
-using System;
-using System.Collections.Generic;
-using System.Reflection;
 using Microsoft.ML.Runtime;
 using Microsoft.ML.Runtime.CommandLine;
 using Microsoft.ML.Runtime.Data;
-using Microsoft.ML.Runtime.Data.Conversion;
 using Microsoft.ML.Runtime.EntryPoints;
 using Microsoft.ML.Runtime.Internal.Utilities;
 using Microsoft.ML.Runtime.Model;
+using Microsoft.ML.Transforms;
+using System;
+using System.Collections.Generic;
+using System.Reflection;
+using Float = System.Single;
 
 [assembly: LoadableClass(NAFilter.Summary, typeof(NAFilter), typeof(NAFilter.Arguments), typeof(SignatureDataTransform),
     NAFilter.FriendlyName, NAFilter.ShortName, "MissingValueFilter", "MissingFilter")]
@@ -24,17 +23,23 @@ using Microsoft.ML.Runtime.Model;
 [assembly: LoadableClass(NAFilter.Summary, typeof(NAFilter), null, typeof(SignatureLoadDataTransform),
     NAFilter.FriendlyName, NAFilter.LoaderSignature, "MissingFeatureFilter")]
 
-namespace Microsoft.ML.Runtime.Data
+namespace Microsoft.ML.Transforms
 {
+    /// <include file='doc.xml' path='doc/members/member[@name="NAFilter"]'/>
     public sealed class NAFilter : FilterBase
     {
+        private static class Defaults
+        {
+            public const bool Complement = false;
+        }
+
         public sealed class Arguments : TransformInputBase
         {
             [Argument(ArgumentType.Multiple | ArgumentType.Required, HelpText = "Column", ShortName = "col", SortOrder = 1)]
             public string[] Column;
 
             [Argument(ArgumentType.Multiple, HelpText = "If true, keep only rows that contain NA values, and filter the rest.")]
-            public bool Complement;
+            public bool Complement = Defaults.Complement;
         }
 
         private sealed class ColInfo
@@ -64,13 +69,26 @@ namespace Microsoft.ML.Runtime.Data
                 loaderSignature: LoaderSignature,
                 // This is an older name and can be removed once we don't care about old code
                 // being able to load this.
-                loaderSignatureAlt: "MissingFeatureFilter");
+                loaderSignatureAlt: "MissingFeatureFilter",
+                loaderAssemblyName: typeof(NAFilter).Assembly.FullName);
         }
 
         private readonly ColInfo[] _infos;
         private readonly Dictionary<int, int> _srcIndexToInfoIndex;
         private readonly bool _complement;
         private const string RegistrationName = "MissingValueFilter";
+
+        /// <summary>
+        /// Convenience constructor for public facing API.
+        /// </summary>
+        /// <param name="env">Host Environment.</param>
+        /// <param name="input">Input <see cref="IDataView"/>. This is the output from previous transform or loader.</param>
+        /// <param name="complement">If true, keep only rows that contain NA values, and filter the rest.</param>
+        /// <param name="columns">Name of the columns. Only these columns will be used to filter rows having 'NA' values.</param>
+        public NAFilter(IHostEnvironment env, IDataView input, bool complement = Defaults.Complement, params string[] columns)
+            : this(env, new Arguments() { Column = columns, Complement = complement }, input)
+        {
+        }
 
         public NAFilter(IHostEnvironment env, Arguments args, IDataView input)
             : base(env, RegistrationName, input)
@@ -290,7 +308,7 @@ namespace Microsoft.ML.Runtime.Data
                     Contracts.Assert(info.Type.RawType == typeof(T));
 
                     var getSrc = cursor.Input.GetGetter<T>(info.Index);
-                    var hasBad = Conversions.Instance.GetIsNAPredicate<T>(info.Type);
+                    var hasBad = Runtime.Data.Conversion.Conversions.Instance.GetIsNAPredicate<T>(info.Type);
                     return new ValueOne<T>(cursor, getSrc, hasBad);
                 }
 
@@ -302,17 +320,17 @@ namespace Microsoft.ML.Runtime.Data
                     Contracts.Assert(info.Type.ItemType.RawType == typeof(T));
 
                     var getSrc = cursor.Input.GetGetter<VBuffer<T>>(info.Index);
-                    var hasBad = Conversions.Instance.GetHasMissingPredicate<T>((VectorType)info.Type);
+                    var hasBad = Runtime.Data.Conversion.Conversions.Instance.GetHasMissingPredicate<T>((VectorType)info.Type);
                     return new ValueVec<T>(cursor, getSrc, hasBad);
                 }
 
                 private abstract class TypedValue<T> : Value
                 {
                     private readonly ValueGetter<T> _getSrc;
-                    private readonly RefPredicate<T> _hasBad;
+                    private readonly InPredicate<T> _hasBad;
                     public T Src;
 
-                    protected TypedValue(RowCursor cursor, ValueGetter<T> getSrc, RefPredicate<T> hasBad)
+                    protected TypedValue(RowCursor cursor, ValueGetter<T> getSrc, InPredicate<T> hasBad)
                         : base(cursor)
                     {
                         Contracts.AssertValue(getSrc);
@@ -324,7 +342,7 @@ namespace Microsoft.ML.Runtime.Data
                     public override bool Refresh()
                     {
                         _getSrc(ref Src);
-                        return !_hasBad(ref Src);
+                        return !_hasBad(in Src);
                     }
                 }
 
@@ -332,7 +350,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     private readonly ValueGetter<T> _getter;
 
-                    public ValueOne(RowCursor cursor, ValueGetter<T> getSrc, RefPredicate<T> hasBad)
+                    public ValueOne(RowCursor cursor, ValueGetter<T> getSrc, InPredicate<T> hasBad)
                         : base(cursor, getSrc, hasBad)
                     {
                         _getter = GetValue;
@@ -354,7 +372,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     private readonly ValueGetter<VBuffer<T>> _getter;
 
-                    public ValueVec(RowCursor cursor, ValueGetter<VBuffer<T>> getSrc, RefPredicate<VBuffer<T>> hasBad)
+                    public ValueVec(RowCursor cursor, ValueGetter<VBuffer<T>> getSrc, InPredicate<VBuffer<T>> hasBad)
                         : base(cursor, getSrc, hasBad)
                     {
                         _getter = GetValue;

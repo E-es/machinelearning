@@ -3,21 +3,23 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace Microsoft.ML.Runtime.Internal.Utilities
 {
     /// <summary>
-    /// An array-like data structure that supports storing more than 
-    /// <see cref="Utils.ArrayMaxSize"/> many entries, up to 0x7FEFFFFF00000L. 
-    /// The entries are indexed by 64-bit integers, and a single entry can be accessed by 
+    /// An array-like data structure that supports storing more than
+    /// <see cref="Utils.ArrayMaxSize"/> many entries, up to 0x7FEFFFFF00000L.
+    /// The entries are indexed by 64-bit integers, and a single entry can be accessed by
     /// the indexer if no modifications to the entries is desired, or the <see cref="ApplyAt"/>
     /// method. Efficient looping can be accomplished by calling the <see cref="ApplyRange"/> method.
-    /// This data structure employs the "length and capacity" pattern. The logical length 
+    /// This data structure employs the "length and capacity" pattern. The logical length
     /// can be retrieved from the <see cref="Length"/> property, which can possibly be strictly less
-    /// than the total capacity. 
+    /// than the total capacity.
     /// </summary>
     /// <typeparam name="T">The type of entries.</typeparam>
-    public sealed class BigArray<T>
+    public sealed class BigArray<T> : IEnumerable<T>
     {
         // REVIEW: This class merges and replaces the original private BigArray implementation in CacheDataView.
         // There the block size was 25 bits. Need to understand the performance implication of this 32x change.
@@ -38,8 +40,8 @@ namespace Microsoft.ML.Runtime.Internal.Utilities
         // The 2-D jagged array containing the entries.
         // Its total size is larger than or equal to _length, but
         // less than Length + BlockSize.
-        // Each one-dimension subarray has length equal to BlockSize, 
-        // except for the last one, which has a positive length 
+        // Each one-dimension subarray has length equal to BlockSize,
+        // except for the last one, which has a positive length
         // less than or equal to BlockSize.
         private T[][] _entries;
 
@@ -53,13 +55,13 @@ namespace Microsoft.ML.Runtime.Internal.Utilities
         public long Length { get { return _length; } }
 
         /// <summary>
-        /// Gets or sets the entry at <paramref name="index"/>. 
+        /// Gets or sets the entry at <paramref name="index"/>.
         /// </summary>
         /// <remarks>
-        /// This indexer is not efficient for looping. If looping access to entries is desired, 
+        /// This indexer is not efficient for looping. If looping access to entries is desired,
         /// use the <see cref="ApplyRange"/> method instead.
-        /// Note that unlike a normal array, the value returned from this indexer getter cannot be modified 
-        /// (e.g., by ++ operator or passing into a method as a ref parameter). To modify an entry, use 
+        /// Note that unlike a normal array, the value returned from this indexer getter cannot be modified
+        /// (for example, by ++ operator or passing into a method as a ref parameter). To modify an entry, use
         /// the <see cref="ApplyAt"/> method instead.
         /// </remarks>
         public T this[long index]
@@ -113,7 +115,7 @@ namespace Microsoft.ML.Runtime.Internal.Utilities
         public delegate void Visitor(long index, ref T item);
 
         /// <summary>
-        /// Applies a <see cref="Visitor"/> method at a given <paramref name="index"/>. 
+        /// Applies a <see cref="Visitor"/> method at a given <paramref name="index"/>.
         /// </summary>
         public void ApplyAt(long index, Visitor manip)
         {
@@ -190,16 +192,16 @@ namespace Microsoft.ML.Runtime.Internal.Utilities
         }
 
         /// <summary>
-        /// Resizes the array so that its logical length equals <paramref name="newLength"/>. This method 
-        /// is more efficient than initialize another array and copy the entries because it preserves 
+        /// Resizes the array so that its logical length equals <paramref name="newLength"/>. This method
+        /// is more efficient than initialize another array and copy the entries because it preserves
         /// existing blocks. The actual capacity of the array may become larger than <paramref name="newLength"/>.
         /// If <paramref name="newLength"/> equals <see cref="Length"/>, then no operation is done.
         /// If <paramref name="newLength"/> is less than <see cref="Length"/>, the array shrinks in size
         /// so that both its length and its capacity equal <paramref name="newLength"/>.
         /// If <paramref name="newLength"/> is larger than <see cref="Length"/>, the array capacity grows
-        /// to the smallest integral multiple of <see cref="BlockSize"/> that is larger than <paramref name="newLength"/>, 
-        /// unless <paramref name="newLength"/> is less than <see cref="BlockSize"/>, in which case the capacity 
-        /// grows to double its current capacity or <paramref name="newLength"/>, which ever is larger, 
+        /// to the smallest integral multiple of <see cref="BlockSize"/> that is larger than <paramref name="newLength"/>,
+        /// unless <paramref name="newLength"/> is less than <see cref="BlockSize"/>, in which case the capacity
+        /// grows to double its current capacity or <paramref name="newLength"/>, which ever is larger,
         /// but up to <see cref="BlockSize"/>.
         /// </summary>
         public void Resize(long newLength)
@@ -304,7 +306,7 @@ namespace Microsoft.ML.Runtime.Internal.Utilities
         }
 
         /// <summary>
-        /// Appends the first <paramref name="length"/> elements of <paramref name="src"/> to the end. 
+        /// Appends the first <paramref name="length"/> elements of <paramref name="src"/> to the end.
         /// This method is thread safe related to calls to <see cref="M:CopyTo"/> (assuming those copy operations
         /// are happening over ranges already added), but concurrent calls to
         /// <see cref="M:AddRange"/> should not be attempted. Intended usage is that
@@ -373,10 +375,10 @@ namespace Microsoft.ML.Runtime.Internal.Utilities
         }
 
         /// <summary>
-        /// Copies the subarray starting from index <paramref name="idx"/> of length 
-        /// <paramref name="length"/> to the destination array <paramref name="dst"/>. 
-        /// Concurrent calls to this method is valid even with one single concurrent call 
-        /// to <see cref="M:AddRange"/>. 
+        /// Copies the subarray starting from index <paramref name="idx"/> of length
+        /// <paramref name="length"/> to the destination array <paramref name="dst"/>.
+        /// Concurrent calls to this method is valid even with one single concurrent call
+        /// to <see cref="M:AddRange"/>.
         /// </summary>
         public void CopyTo(long idx, T[] dst, int length)
         {
@@ -453,6 +455,21 @@ namespace Microsoft.ML.Runtime.Internal.Utilities
             major = (int)((--lim) >> BlockSizeBits);
             minor = (int)((lim & BlockSizeMinusOne) + 1);
             Contracts.Assert((long)major * BlockSize + minor == lim + 1);
+        }
+
+        public IEnumerator<T> GetEnumerator()
+        {
+            long cur = 0;
+            while (cur < _length)
+            {
+                yield return this[cur];
+                cur++;
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator()
+        {
+            return GetEnumerator();
         }
     }
 }

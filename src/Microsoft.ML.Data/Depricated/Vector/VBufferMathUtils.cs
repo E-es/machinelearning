@@ -22,7 +22,7 @@ namespace Microsoft.ML.Runtime.Numeric
         {
             if (a.Count == 0)
                 return 0;
-            return SseUtils.SumSq(a.Values, 0, a.Count);
+            return CpuMathUtils.SumSq(a.Values.AsSpan(0, a.Count));
         }
 
         /// <summary>
@@ -30,7 +30,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// </summary>
         public static Float NormSquared(Float[] a, int offset, int count)
         {
-            return SseUtils.SumSq(a, offset, count);
+            return CpuMathUtils.SumSq(a.AsSpan(offset, count));
         }
 
         /// <summary>
@@ -46,32 +46,32 @@ namespace Microsoft.ML.Runtime.Numeric
         /// Returns the L1 norm of the vector.
         /// </summary>
         /// <returns>L1 norm of the vector</returns>
-        public static Float L1Norm(ref VBuffer<Float> a)
+        public static Float L1Norm(in VBuffer<Float> a)
         {
             if (a.Count == 0)
                 return 0;
-            return SseUtils.SumAbs(a.Values, 0, a.Count);
+            return CpuMathUtils.SumAbs(a.Values.AsSpan(0, a.Count));
         }
 
         /// <summary>
         /// Returns the L-infinity norm of the vector (i.e., the maximum absolute value).
         /// </summary>
         /// <returns>L-infinity norm of the vector</returns>
-        public static Float MaxNorm(ref VBuffer<Float> a)
+        public static Float MaxNorm(in VBuffer<Float> a)
         {
             if (a.Count == 0)
                 return 0;
-            return SseUtils.MaxAbs(a.Values, 0, a.Count);
+            return CpuMathUtils.MaxAbs(a.Values.AsSpan(0, a.Count));
         }
 
         /// <summary>
         /// Returns the sum of elements in the vector.
         /// </summary>
-        public static Float Sum(ref VBuffer<Float> a)
+        public static Float Sum(in VBuffer<Float> a)
         {
             if (a.Count == 0)
                 return 0;
-            return SseUtils.Sum(a.Values, 0, a.Count);
+            return CpuMathUtils.Sum(a.Values.AsSpan(0, a.Count));
         }
 
         /// <summary>
@@ -84,7 +84,7 @@ namespace Microsoft.ML.Runtime.Numeric
             if (c == 1 || dst.Count == 0)
                 return;
             if (c != 0)
-                SseUtils.Scale(c, dst.Values, dst.Count);
+                CpuMathUtils.Scale(c, dst.Values.AsSpan(0, dst.Count));
             else // Maintain density of dst.
                 Array.Clear(dst.Values, 0, dst.Count);
             // REVIEW: Any benefit in sparsifying?
@@ -114,7 +114,7 @@ namespace Microsoft.ML.Runtime.Numeric
                 if (c == 0)
                     Array.Clear(dstValues, 0, length);
                 else
-                    SseUtils.Scale(c, src.Values, dstValues, length);
+                    CpuMathUtils.Scale(c, src.Values, dstValues, length);
                 dst = new VBuffer<Float>(length, dstValues, dst.Indices);
             }
             else
@@ -124,7 +124,7 @@ namespace Microsoft.ML.Runtime.Numeric
                 if (c == 0)
                     Array.Clear(dstValues, 0, count);
                 else
-                    SseUtils.Scale(c, src.Values, dstValues, count);
+                    CpuMathUtils.Scale(c, src.Values, dstValues, count);
                 dst = new VBuffer<Float>(length, count, dstValues, dstIndices);
             }
         }
@@ -132,7 +132,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <summary>
         /// Perform in-place vector addition <c><paramref name="dst"/> += <paramref name="src"/></c>.
         /// </summary>
-        public static void Add(ref VBuffer<Float> src, ref VBuffer<Float> dst)
+        public static void Add(in VBuffer<Float> src, ref VBuffer<Float> dst)
         {
             Contracts.Check(src.Length == dst.Length, "Vectors must have the same dimensionality.");
 
@@ -142,13 +142,13 @@ namespace Microsoft.ML.Runtime.Numeric
             if (dst.IsDense)
             {
                 if (src.IsDense)
-                    SseUtils.Add(src.Values, dst.Values, src.Length);
+                    CpuMathUtils.Add(src.Values, dst.Values, src.Length);
                 else
-                    SseUtils.Add(src.Values, src.Indices, dst.Values, src.Count);
+                    CpuMathUtils.Add(src.Values, src.Indices, dst.Values, src.Count);
                 return;
             }
             // REVIEW: Should we use SSE for any of these possibilities?
-            VBufferUtils.ApplyWith(ref src, ref dst, (int i, Float v1, ref Float v2) => v2 += v1);
+            VBufferUtils.ApplyWith(in src, ref dst, (int i, Float v1, ref Float v2) => v2 += v1);
         }
 
         // REVIEW: Rename all instances of AddMult to AddScale, as soon as convesion concerns are no more.
@@ -158,7 +158,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// If either vector is dense, <paramref name="dst"/> will be dense, unless
         /// <paramref name="c"/> is 0 in which case this method does nothing.
         /// </summary>
-        public static void AddMult(ref VBuffer<Float> src, Float c, ref VBuffer<Float> dst)
+        public static void AddMult(in VBuffer<Float> src, Float c, ref VBuffer<Float> dst)
         {
             Contracts.Check(src.Length == dst.Length, "Vectors must have the same dimensionality.");
 
@@ -168,20 +168,20 @@ namespace Microsoft.ML.Runtime.Numeric
             if (dst.IsDense)
             {
                 if (src.IsDense)
-                    SseUtils.AddScale(c, src.Values, dst.Values, src.Length);
+                    CpuMathUtils.AddScale(c, src.Values, dst.Values, src.Length);
                 else
-                    SseUtils.AddScale(c, src.Values, src.Indices, dst.Values, src.Count);
+                    CpuMathUtils.AddScale(c, src.Values, src.Indices, dst.Values, src.Count);
                 return;
             }
             // REVIEW: Should we use SSE for any of these possibilities?
-            VBufferUtils.ApplyWith(ref src, ref dst, (int i, Float v1, ref Float v2) => v2 += c * v1);
+            VBufferUtils.ApplyWith(in src, ref dst, (int i, Float v1, ref Float v2) => v2 += c * v1);
         }
 
         /// <summary>
         /// Perform scalar vector addition
         /// <c><paramref name="res"/> = <paramref name="c"/> * <paramref name="src"/> + <paramref name="dst"/></c>
         /// </summary>
-        public static void AddMult(ref VBuffer<Float> src, Float c, ref VBuffer<Float> dst, ref VBuffer<Float> res)
+        public static void AddMult(in VBuffer<Float> src, Float c, ref VBuffer<Float> dst, ref VBuffer<Float> res)
         {
             Contracts.Check(src.Length == dst.Length, "Vectors must have the same dimensionality.");
             int length = src.Length;
@@ -197,12 +197,12 @@ namespace Microsoft.ML.Runtime.Numeric
             if (dst.IsDense && src.IsDense)
             {
                 Float[] resValues = Utils.Size(res.Values) >= length ? res.Values : new Float[length];
-                SseUtils.AddScaleCopy(c, src.Values, dst.Values, resValues, length);
+                CpuMathUtils.AddScaleCopy(c, src.Values, dst.Values, resValues, length);
                 res = new VBuffer<Float>(length, resValues, res.Indices);
                 return;
             }
 
-            VBufferUtils.ApplyWithCopy(ref src, ref dst, ref res, (int i, Float v1, Float v2, ref Float v3) => v3 = v2 + c * v1);
+            VBufferUtils.ApplyWithCopy(in src, ref dst, ref res, (int i, Float v1, Float v2, ref Float v3) => v3 = v2 + c * v1);
         }
 
         /// <summary>
@@ -210,16 +210,16 @@ namespace Microsoft.ML.Runtime.Numeric
         /// <c><paramref name="a"/> + <paramref name="c"/> * <paramref name="b"/></c>
         /// and store the result in <paramref name="dst"/>.
         /// </summary>
-        public static void AddMultInto(ref VBuffer<Float> a, Float c, ref VBuffer<Float> b, ref VBuffer<Float> dst)
+        public static void AddMultInto(in VBuffer<Float> a, Float c, in VBuffer<Float> b, ref VBuffer<Float> dst)
         {
             Contracts.Check(a.Length == b.Length, "Vectors must have the same dimensionality.");
 
             if (c == 0 || b.Count == 0)
                 a.CopyTo(ref dst);
             else if (a.Count == 0)
-                ScaleInto(ref b, c, ref dst);
+                ScaleInto(in b, c, ref dst);
             else
-                VBufferUtils.ApplyInto(ref a, ref b, ref dst, (ind, v1, v2) => v1 + c * v2);
+                VBufferUtils.ApplyInto(in a, in b, ref dst, (ind, v1, v2) => v1 + c * v2);
         }
 
         /// <summary>
@@ -228,7 +228,7 @@ namespace Microsoft.ML.Runtime.Numeric
         /// except that this takes place in the section of <paramref name="dst"/> starting
         /// at slot <paramref name="offset"/>.
         /// </summary>
-        public static void AddMultWithOffset(ref VBuffer<Float> src, Float c, ref VBuffer<Float> dst, int offset)
+        public static void AddMultWithOffset(in VBuffer<Float> src, Float c, ref VBuffer<Float> dst, int offset)
         {
             Contracts.CheckParam(0 <= offset && offset <= dst.Length, nameof(offset));
             Contracts.CheckParam(src.Length <= dst.Length - offset, nameof(offset));
@@ -239,9 +239,9 @@ namespace Microsoft.ML.Runtime.Numeric
             {
                 // This is by far the most common case.
                 if (src.IsDense)
-                    SseUtils.AddScale(c, src.Values, dst.Values, offset, src.Count);
+                    CpuMathUtils.AddScale(c, src.Values, dst.Values.AsSpan(offset), src.Count);
                 else
-                    SseUtils.AddScale(c, src.Values, src.Indices, dst.Values, offset, src.Count);
+                    CpuMathUtils.AddScale(c, src.Values, src.Indices, dst.Values.AsSpan(offset), src.Count);
                 return;
             }
             // REVIEW: Perhaps implementing an ApplyInto with an offset would be more
@@ -350,12 +350,12 @@ namespace Microsoft.ML.Runtime.Numeric
         /// Perform in-place scaling of a vector into another vector as
         /// <c><paramref name="dst"/> = <paramref name="src"/> * <paramref name="c"/></c>.
         /// This is more or less equivalent to performing the same operation with
-        /// <see cref="VBufferUtils.ApplyInto"/> except perhaps more efficiently,
+        /// <see cref="VBufferUtils.ApplyInto{TSrc1,TSrc2,TDst}"/> except perhaps more efficiently,
         /// with one exception: if <paramref name="c"/> is 0 and <paramref name="src"/>
         /// is sparse, <paramref name="dst"/> will have a count of zero, instead of the
         /// same count as <paramref name="src"/>.
         /// </summary>
-        public static void ScaleInto(ref VBuffer<Float> src, Float c, ref VBuffer<Float> dst)
+        public static void ScaleInto(in VBuffer<Float> src, Float c, ref VBuffer<Float> dst)
         {
             // REVIEW: The analogous WritableVector method insisted on
             // equal lengths, but I assume I don't care here.
@@ -376,12 +376,12 @@ namespace Microsoft.ML.Runtime.Numeric
                     dst = new VBuffer<Float>(src.Length, 0, dst.Values, dst.Indices);
             }
             else if (c == -1)
-                VBufferUtils.ApplyIntoEitherDefined(ref src, ref dst, (i, v) => -v);
+                VBufferUtils.ApplyIntoEitherDefined(in src, ref dst, (i, v) => -v);
             else
-                VBufferUtils.ApplyIntoEitherDefined(ref src, ref dst, (i, v) => c * v);
+                VBufferUtils.ApplyIntoEitherDefined(in src, ref dst, (i, v) => c * v);
         }
 
-        public static int ArgMax(ref VBuffer<Float> src)
+        public static int ArgMax(in VBuffer<Float> src)
         {
             if (src.Length == 0)
                 return -1;
@@ -415,7 +415,7 @@ namespace Microsoft.ML.Runtime.Numeric
             return ind;
         }
 
-        public static int ArgMin(ref VBuffer<Float> src)
+        public static int ArgMin(in VBuffer<Float> src)
         {
             if (src.Length == 0)
                 return -1;

@@ -3,25 +3,88 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.Reflection;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
+using Microsoft.ML.Core.Data;
 using Microsoft.ML.Runtime;
 using Microsoft.ML.Runtime.CommandLine;
 using Microsoft.ML.Runtime.Data;
 using Microsoft.ML.Runtime.EntryPoints;
 using Microsoft.ML.Runtime.Internal.Utilities;
 using Microsoft.ML.Runtime.Model;
+using Microsoft.ML.Runtime.Model.Onnx;
+using Microsoft.ML.Transforms;
 
-[assembly: LoadableClass(CopyColumnsTransform.Summary, typeof(CopyColumnsTransform), typeof(CopyColumnsTransform.Arguments), typeof(SignatureDataTransform),
-    CopyColumnsTransform.UserName, "CopyColumns", "CopyColumnsTransform", CopyColumnsTransform.ShortName, DocName = "transform/CopyColumnsTransform.md")]
+[assembly: LoadableClass(CopyColumnsTransform.Summary, typeof(IDataTransform), typeof(CopyColumnsTransform),
+    typeof(CopyColumnsTransform.Arguments), typeof(SignatureDataTransform),
+    CopyColumnsTransform.UserName, "CopyColumns", "CopyColumnsTransform", CopyColumnsTransform.ShortName,
+    DocName = "transform/CopyColumnsTransformer.md")]
 
-[assembly: LoadableClass(CopyColumnsTransform.Summary, typeof(CopyColumnsTransform), null, typeof(SignatureLoadDataTransform),
+[assembly: LoadableClass(CopyColumnsTransform.Summary, typeof(IDataTransform), typeof(CopyColumnsTransform), null, typeof(SignatureLoadDataTransform),
     CopyColumnsTransform.UserName, CopyColumnsTransform.LoaderSignature)]
 
-namespace Microsoft.ML.Runtime.Data
+[assembly: LoadableClass(CopyColumnsTransform.Summary, typeof(CopyColumnsTransform), null, typeof(SignatureLoadModel),
+    CopyColumnsTransform.UserName, CopyColumnsTransform.LoaderSignature)]
+
+[assembly: LoadableClass(typeof(IRowMapper), typeof(CopyColumnsTransform), null, typeof(SignatureLoadRowMapper),
+    CopyColumnsTransform.UserName, CopyColumnsTransform.LoaderSignature)]
+
+namespace Microsoft.ML.Transforms
 {
-    public sealed class CopyColumnsTransform : OneToOneTransformBase
+    public sealed class CopyColumnsEstimator : TrivialEstimator<CopyColumnsTransform>
     {
+        public CopyColumnsEstimator(IHostEnvironment env, string input, string output) :
+            this(env, (input, output))
+        {
+        }
+
+        public CopyColumnsEstimator(IHostEnvironment env, params (string source, string name)[] columns)
+            : base(Contracts.CheckRef(env, nameof(env)).Register(nameof(CopyColumnsEstimator)), new CopyColumnsTransform(env, columns))
+        {
+        }
+
+        public override SchemaShape GetOutputSchema(SchemaShape inputSchema)
+        {
+            Host.CheckValue(inputSchema, nameof(inputSchema));
+
+            var resultDic = inputSchema.Columns.ToDictionary(x => x.Name);
+            foreach (var (Source, Name) in Transformer.Columns)
+            {
+                if (!inputSchema.TryFindColumn(Source, out var originalColumn))
+                    throw Host.ExceptSchemaMismatch(nameof(inputSchema), "input", Source);
+                var col = new SchemaShape.Column(Name, originalColumn.Kind, originalColumn.ItemType, originalColumn.IsKey, originalColumn.Metadata);
+                resultDic[Name] = col;
+            }
+            return new SchemaShape(resultDic.Values);
+        }
+    }
+
+    public sealed class CopyColumnsTransform : OneToOneTransformerBase
+    {
+        public const string LoaderSignature = "CopyTransform";
+        internal const string Summary = "Copy a source column to a new column.";
+        internal const string UserName = "Copy Columns Transform";
+        internal const string ShortName = "Copy";
+
+        public IReadOnlyCollection<(string Source, string Name)> Columns => ColumnPairs.AsReadOnly();
+
+        private static VersionInfo GetVersionInfo()
+        {
+            return new VersionInfo(
+                modelSignature: "COPYCOLT",
+                verWrittenCur: 0x00010001, // Initial
+                verReadableCur: 0x00010001,
+                verWeCanReadBack: 0x00010001,
+                loaderSignature: LoaderSignature,
+                loaderAssemblyName: typeof(CopyColumnsTransform).Assembly.FullName);
+        }
+
+        public CopyColumnsTransform(IHostEnvironment env, params (string source, string name)[] columns)
+            : base(Contracts.CheckRef(env, nameof(env)).Register(nameof(CopyColumnsTransform)), columns)
+        {
+        }
+
         public sealed class Column : OneToOneColumn
         {
             public static Column Parse(string str)
@@ -47,108 +110,108 @@ namespace Microsoft.ML.Runtime.Data
             public Column[] Column;
         }
 
-        public const string Summary = "Copy a source column to a new column.";
-        public const string UserName = "Copy Columns Transform";
-        public const string ShortName = "Copy";
-
-        public const string LoaderSignature = "CopyTransform";
-        private static VersionInfo GetVersionInfo()
+        // Factory method to create from arguments
+        public static IDataTransform Create(IHostEnvironment env, Arguments args, IDataView input)
         {
-            return new VersionInfo(
-                modelSignature: "COPYCOLT",
-                verWrittenCur: 0x00010001, // Initial
-                verReadableCur: 0x00010001,
-                verWeCanReadBack: 0x00010001,
-                loaderSignature: LoaderSignature);
+            Contracts.CheckValue(env, nameof(env));
+            env.CheckValue(args, nameof(args));
+
+            var transformer = new CopyColumnsTransform(env, args.Column.Select(x => (x.Source, x.Name)).ToArray());
+            return transformer.MakeDataTransform(input);
         }
 
-        private const string RegistrationName = "CopyColumns";
-
-        public CopyColumnsTransform(IHostEnvironment env, Arguments args, IDataView input)
-            : base(env, RegistrationName, env.CheckRef(args, nameof(args)).Column, input, null)
-        {
-            Host.AssertNonEmpty(Infos);
-            Host.Assert(Infos.Length == Utils.Size(args.Column));
-            SetMetadata();
-        }
-
-        private CopyColumnsTransform(IHost host, ModelLoadContext ctx, IDataView input)
-            : base(host, ctx, input, null)
-        {
-            Host.AssertValue(ctx);
-
-            // *** Binary format ***
-            // <base>
-
-            Host.AssertNonEmpty(Infos);
-            SetMetadata();
-        }
-
-        public static CopyColumnsTransform Create(IHostEnvironment env, ModelLoadContext ctx, IDataView input)
+        // Factory method for SignatureLoadModel.
+        private static CopyColumnsTransform Create(IHostEnvironment env, ModelLoadContext ctx)
         {
             Contracts.CheckValue(env, nameof(env));
             env.CheckValue(ctx, nameof(ctx));
             ctx.CheckAtModel(GetVersionInfo());
-            env.CheckValue(input, nameof(input));
 
             // *** Binary format ***
-            // <handled in ctors>
-            var h = env.Register(RegistrationName);
-            return h.Apply("Loading Model", ch => new CopyColumnsTransform(h, ctx, input));
+            // int: number of added columns
+            // for each added column
+            //   string: output column name
+            //   string: input column name
+
+            var length = ctx.Reader.ReadInt32();
+            var columns = new (string Source, string Name)[length];
+            for (int i = 0; i < length; i++)
+            {
+                columns[i].Name = ctx.LoadNonEmptyString();
+                columns[i].Source = ctx.LoadNonEmptyString();
+            }
+            return new CopyColumnsTransform(env, columns);
         }
+
+        // Factory method for SignatureLoadDataTransform.
+        private static IDataTransform Create(IHostEnvironment env, ModelLoadContext ctx, IDataView input)
+            => Create(env, ctx).MakeDataTransform(input);
+
+        // Factory method for SignatureLoadRowMapper.
+        private static IRowMapper Create(IHostEnvironment env, ModelLoadContext ctx, ISchema inputSchema)
+            => Create(env, ctx).MakeRowMapper(inputSchema);
 
         public override void Save(ModelSaveContext ctx)
         {
-            Host.CheckValue(ctx, nameof(ctx));
-            ctx.CheckAtModel();
             ctx.SetVersionInfo(GetVersionInfo());
-
-            // *** Binary format ***
-            // <base>
-
-            SaveBase(ctx);
+            SaveColumns(ctx);
         }
 
-        protected override ColumnType GetColumnTypeCore(int iinfo)
-        {
-            Host.Assert(0 <= iinfo & iinfo < Infos.Length);
-            return Infos[iinfo].TypeSrc;
-        }
+        protected override IRowMapper MakeRowMapper(ISchema inputSchema)
+            => new Mapper(this, Schema.Create(inputSchema), ColumnPairs);
 
-        private void SetMetadata()
+        private sealed class Mapper : MapperBase, ISaveAsOnnx
         {
-            var md = Metadata;
-            for (int iinfo = 0; iinfo < Infos.Length; iinfo++)
+            private readonly Schema _schema;
+            private readonly (string Source, string Name)[] _columns;
+
+            public bool CanSaveOnnx(OnnxContext ctx) => ctx.GetOnnxVersion() == OnnxVersion.Experimental;
+
+            internal Mapper(CopyColumnsTransform parent, Schema inputSchema, (string Source, string Name)[] columns)
+                : base(parent.Host.Register(nameof(Mapper)), parent, inputSchema)
             {
-                // REVIEW: Should we filter out score set metadata or any others?
-                using (var bldr = md.BuildMetadata(iinfo, Source.Schema, Infos[iinfo].Source))
+                _schema = inputSchema;
+                _columns = columns;
+            }
+
+            protected override Delegate MakeGetter(IRow input, int iinfo, out Action disposer)
+            {
+                Host.AssertValue(input);
+                Host.Assert(0 <= iinfo && iinfo < _columns.Length);
+                disposer = null;
+
+                Delegate MakeGetter<T>(IRow row, int index)
+                    => input.GetGetter<T>(index);
+
+                input.Schema.TryGetColumnIndex(_columns[iinfo].Source, out int colIndex);
+                var type = input.Schema.GetColumnType(colIndex);
+                return Utils.MarshalInvoke(MakeGetter<int>, type.RawType, input, colIndex);
+            }
+
+            public override Schema.Column[] GetOutputColumns()
+            {
+                var result = new Schema.Column[_columns.Length];
+                for (int i = 0; i < _columns.Length; i++)
                 {
-                    // No metadata to add.
+                    var srcCol = _schema[_columns[i].Source];
+                    result[i] = new Schema.Column(_columns[i].Name, srcCol.Type, srcCol.Metadata);
+                }
+                return result;
+            }
+
+            public void SaveAsOnnx(OnnxContext ctx)
+            {
+                var opType = "CSharp";
+
+                foreach (var column in _columns)
+                {
+                    var srcVariableName = ctx.GetVariableName(column.Source);
+                    _schema.TryGetColumnIndex(column.Source, out int colIndex);
+                    var dstVariableName = ctx.AddIntermediateVariable(_schema.GetColumnType(colIndex), column.Name);
+                    var node = ctx.CreateNode(opType, srcVariableName, dstVariableName, ctx.GetNodeName(opType));
+                    node.AddAttribute("type", LoaderSignature);
                 }
             }
-            md.Seal();
-        }
-
-        protected override bool WantParallelCursors(Func<int, bool> predicate)
-        {
-            Host.AssertValue(predicate);
-            // Parallel doesn't matter to this transform.
-            return false;
-        }
-
-        protected override Delegate GetGetterCore(IChannel ch, IRow input, int iinfo, out Action disposer)
-        {
-            Host.AssertValueOrNull(ch);
-            Host.AssertValue(input);
-            Host.Assert(0 <= iinfo && iinfo < Infos.Length);
-
-            disposer = null;
-            int col = Infos[iinfo].Source;
-            var typeSrc = input.Schema.GetColumnType(col);
-
-            Func<int, ValueGetter<int>> del = input.GetGetter<int>;
-            var methodInfo = del.GetMethodInfo().GetGenericMethodDefinition().MakeGenericMethod(typeSrc.RawType);
-            return (Delegate)methodInfo.Invoke(input, new object[] { col });
         }
     }
 }

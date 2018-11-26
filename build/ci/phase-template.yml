@@ -1,0 +1,40 @@
+parameters:
+  name: ''
+  architecture: x64
+  buildScript: ''
+  queue: {}
+
+phases:
+  - phase: ${{ parameters.name }}
+    variables:
+      _buildScript: ${{ parameters.buildScript }}
+      _phaseName: ${{ parameters.name }}
+      _arch: ${{ parameters.architecture }}
+    queue:
+      parallel: 99
+      matrix:
+        Build_Debug:
+          _configuration: Debug
+        Build_Release:
+          _configuration: Release
+      ${{ insert }}: ${{ parameters.queue }}
+    steps:
+    - script: $(_buildScript) -$(_configuration) -buildArch=$(_arch)
+      displayName: Build
+    - ${{ if eq(parameters.name, 'MacOS') }}:
+      - script: brew install libomp
+        displayName: Install OpenMP runtime dependency
+    - script: $(_buildScript) -$(_configuration) -runtests
+      displayName: Run Tests
+    - task: PublishTestResults@2
+      displayName: Publish Test Results
+      condition: succeededOrFailed()
+      inputs:
+        testRunner: 'vSTest'
+        searchFolder: '$(System.DefaultWorkingDirectory)/bin'
+        testResultsFiles: '**/*.trx'
+        testRunTitle: Machinelearning_Tests_$(_phaseName)_$(_configuration)_$(Build.BuildNumber)
+        configuration: $(_configuration)
+        mergeTestResults: true
+    - script: $(_buildScript) -buildPackages
+      displayName: Build Packages

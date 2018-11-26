@@ -2,11 +2,13 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System;
-using Microsoft.ML.Runtime.Internal.Utilities;
+using Microsoft.ML.Runtime;
+using Microsoft.ML.Runtime.Data;
 using Microsoft.ML.Runtime.Internal.CpuMath;
+using Microsoft.ML.Runtime.Internal.Utilities;
+using System;
 
-namespace Microsoft.ML.Runtime.Data
+namespace Microsoft.ML.Transforms
 {
     using Conditional = System.Diagnostics.ConditionalAttribute;
 
@@ -14,7 +16,7 @@ namespace Microsoft.ML.Runtime.Data
     {
         private static StatAggregator CreateStatAggregator(IChannel ch, ColumnType type, ReplacementKind? kind, bool bySlot, IRowCursor cursor, int col)
         {
-            ch.Assert(type.ItemType.IsNumber || type.ItemType.IsTimeSpan || type.ItemType.IsDateTime);
+            ch.Assert(type.ItemType.IsNumber);
             if (!type.IsVector)
             {
                 // The type is a scalar.
@@ -22,22 +24,10 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     switch (type.RawKind)
                     {
-                    case DataKind.I1:
-                        return new I1.MeanAggregatorOne(ch, cursor, col);
-                    case DataKind.I2:
-                        return new I2.MeanAggregatorOne(ch, cursor, col);
-                    case DataKind.I4:
-                        return new I4.MeanAggregatorOne(ch, cursor, col);
-                    case DataKind.I8:
-                        return new Long.MeanAggregatorOne<DvInt8>(ch, type, cursor, col);
                     case DataKind.R4:
                         return new R4.MeanAggregatorOne(ch, cursor, col);
                     case DataKind.R8:
                         return new R8.MeanAggregatorOne(ch, cursor, col);
-                    case DataKind.TS:
-                        return new Long.MeanAggregatorOne<DvTimeSpan>(ch, type, cursor, col);
-                    case DataKind.DT:
-                        return new Long.MeanAggregatorOne<DvDateTime>(ch, type, cursor, col);
                     default:
                         break;
                     }
@@ -46,22 +36,10 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     switch (type.RawKind)
                     {
-                    case DataKind.I1:
-                        return new I1.MinMaxAggregatorOne(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I2:
-                        return new I2.MinMaxAggregatorOne(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I4:
-                        return new I4.MinMaxAggregatorOne(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I8:
-                        return new Long.MinMaxAggregatorOne<DvInt8>(ch, type, cursor, col, kind == ReplacementKind.Max);
                     case DataKind.R4:
                         return new R4.MinMaxAggregatorOne(ch, cursor, col, kind == ReplacementKind.Max);
                     case DataKind.R8:
                         return new R8.MinMaxAggregatorOne(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.TS:
-                        return new Long.MinMaxAggregatorOne<DvTimeSpan>(ch, type, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.DT:
-                        return new Long.MinMaxAggregatorOne<DvDateTime>(ch, type, cursor, col, kind == ReplacementKind.Max);
                     default:
                         break;
                     }
@@ -78,22 +56,10 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     switch (type.ItemType.RawKind)
                     {
-                    case DataKind.I1:
-                        return new I1.MeanAggregatorBySlot(ch, type, cursor, col);
-                    case DataKind.I2:
-                        return new I2.MeanAggregatorBySlot(ch, type, cursor, col);
-                    case DataKind.I4:
-                        return new I4.MeanAggregatorBySlot(ch, type, cursor, col);
-                    case DataKind.I8:
-                        return new Long.MeanAggregatorBySlot<DvInt8>(ch, type, cursor, col);
                     case DataKind.R4:
                         return new R4.MeanAggregatorBySlot(ch, type, cursor, col);
                     case DataKind.R8:
                         return new R8.MeanAggregatorBySlot(ch, type, cursor, col);
-                    case DataKind.TS:
-                        return new Long.MeanAggregatorBySlot<DvTimeSpan>(ch, type, cursor, col);
-                    case DataKind.DT:
-                        return new Long.MeanAggregatorBySlot<DvDateTime>(ch, type, cursor, col);
                     default:
                         break;
                     }
@@ -102,22 +68,10 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     switch (type.ItemType.RawKind)
                     {
-                    case DataKind.I1:
-                        return new I1.MinMaxAggregatorBySlot(ch, type, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I2:
-                        return new I2.MinMaxAggregatorBySlot(ch, type, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I4:
-                        return new I4.MinMaxAggregatorBySlot(ch, type, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I8:
-                        return new Long.MinMaxAggregatorBySlot<DvInt8>(ch, type, cursor, col, kind == ReplacementKind.Max);
                     case DataKind.R4:
                         return new R4.MinMaxAggregatorBySlot(ch, type, cursor, col, kind == ReplacementKind.Max);
                     case DataKind.R8:
                         return new R8.MinMaxAggregatorBySlot(ch, type, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.TS:
-                        return new Long.MinMaxAggregatorBySlot<DvTimeSpan>(ch, type, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.DT:
-                        return new Long.MinMaxAggregatorBySlot<DvDateTime>(ch, type, cursor, col, kind == ReplacementKind.Max);
                     default:
                         break;
                     }
@@ -130,22 +84,10 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     switch (type.ItemType.RawKind)
                     {
-                    case DataKind.I1:
-                        return new I1.MeanAggregatorAcrossSlots(ch, cursor, col);
-                    case DataKind.I2:
-                        return new I2.MeanAggregatorAcrossSlots(ch, cursor, col);
-                    case DataKind.I4:
-                        return new I4.MeanAggregatorAcrossSlots(ch, cursor, col);
-                    case DataKind.I8:
-                        return new Long.MeanAggregatorAcrossSlots<DvInt8>(ch, type, cursor, col);
                     case DataKind.R4:
                         return new R4.MeanAggregatorAcrossSlots(ch, cursor, col);
                     case DataKind.R8:
                         return new R8.MeanAggregatorAcrossSlots(ch, cursor, col);
-                    case DataKind.TS:
-                        return new Long.MeanAggregatorAcrossSlots<DvTimeSpan>(ch, type, cursor, col);
-                    case DataKind.DT:
-                        return new Long.MeanAggregatorAcrossSlots<DvDateTime>(ch, type, cursor, col);
                     default:
                         break;
                     }
@@ -154,22 +96,10 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     switch (type.ItemType.RawKind)
                     {
-                    case DataKind.I1:
-                        return new I1.MinMaxAggregatorAcrossSlots(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I2:
-                        return new I2.MinMaxAggregatorAcrossSlots(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I4:
-                        return new I4.MinMaxAggregatorAcrossSlots(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.I8:
-                        return new Long.MinMaxAggregatorAcrossSlots<DvInt8>(ch, type, cursor, col, kind == ReplacementKind.Max);
                     case DataKind.R4:
                         return new R4.MinMaxAggregatorAcrossSlots(ch, cursor, col, kind == ReplacementKind.Max);
                     case DataKind.R8:
                         return new R8.MinMaxAggregatorAcrossSlots(ch, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.TS:
-                        return new Long.MinMaxAggregatorAcrossSlots<DvTimeSpan>(ch, type, cursor, col, kind == ReplacementKind.Max);
-                    case DataKind.DT:
-                        return new Long.MinMaxAggregatorAcrossSlots<DvDateTime>(ch, type, cursor, col, kind == ReplacementKind.Max);
                     default:
                         break;
                     }
@@ -232,10 +162,10 @@ namespace Microsoft.ML.Runtime.Data
             {
                 _rowCount++;
                 _getter(ref _val);
-                ProcessRow(ref _val);
+                ProcessRow(in _val);
             }
 
-            protected abstract void ProcessRow(ref TValue val);
+            protected abstract void ProcessRow(in TValue val);
         }
 
         private abstract class StatAggregatorAcrossSlots<TItem, TStat> : StatAggregator<VBuffer<TItem>, TStat>
@@ -253,19 +183,19 @@ namespace Microsoft.ML.Runtime.Data
             {
             }
 
-            protected sealed override void ProcessRow(ref VBuffer<TItem> src)
+            protected sealed override void ProcessRow(in VBuffer<TItem> src)
             {
                 var srcCount = src.Count;
                 var srcValues = src.Values;
                 Ch.Assert(Utils.Size(srcValues) >= srcCount);
 
                 for (int slot = 0; slot < srcCount; slot++)
-                    ProcessValue(ref srcValues[slot]);
+                    ProcessValue(in srcValues[slot]);
 
                 _valueCount = _valueCount + (ulong)src.Length;
             }
 
-            protected abstract void ProcessValue(ref TItem val);
+            protected abstract void ProcessValue(in TItem val);
         }
 
         private abstract class StatAggregatorBySlot<TItem, TStatItem> : StatAggregator<VBuffer<TItem>, TStatItem[]>
@@ -278,7 +208,7 @@ namespace Microsoft.ML.Runtime.Data
                 Stat = new TStatItem[type.VectorSize];
             }
 
-            protected sealed override void ProcessRow(ref VBuffer<TItem> src)
+            protected sealed override void ProcessRow(in VBuffer<TItem> src)
             {
                 var srcCount = src.Count;
                 var srcValues = src.Values;
@@ -287,7 +217,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                     // The src vector is dense.
                     for (int slot = 0; slot < srcCount; slot++)
-                        ProcessValue(ref srcValues[slot], slot);
+                        ProcessValue(in srcValues[slot], slot);
                 }
                 else
                 {
@@ -295,17 +225,17 @@ namespace Microsoft.ML.Runtime.Data
                     var srcIndices = src.Indices;
                     Ch.Assert(Utils.Size(srcIndices) >= srcCount);
                     for (int islot = 0; islot < srcCount; islot++)
-                        ProcessValue(ref srcValues[islot], srcIndices[islot]);
+                        ProcessValue(in srcValues[islot], srcIndices[islot]);
                 }
             }
 
-            protected abstract void ProcessValue(ref TItem val, int slot);
+            protected abstract void ProcessValue(in TItem val, int slot);
         }
 
         private abstract class MinMaxAggregatorOne<TValue, TStat> : StatAggregator<TValue, TStat>
         {
             protected readonly bool ReturnMax;
-            private delegate void ProcessValueDelegate(ref TValue val);
+            private delegate void ProcessValueDelegate(in TValue val);
             private readonly ProcessValueDelegate _processValueDelegate;
 
             protected MinMaxAggregatorOne(IChannel ch, IRowCursor cursor, int col, bool returnMax)
@@ -318,9 +248,9 @@ namespace Microsoft.ML.Runtime.Data
                     _processValueDelegate = ProcessValueMin;
             }
 
-            protected override void ProcessRow(ref TValue val)
+            protected override void ProcessRow(in TValue val)
             {
-                _processValueDelegate(ref val);
+                _processValueDelegate(in val);
             }
 
             public override object GetStat()
@@ -328,14 +258,14 @@ namespace Microsoft.ML.Runtime.Data
                 return Stat;
             }
 
-            protected abstract void ProcessValueMin(ref TValue val);
-            protected abstract void ProcessValueMax(ref TValue val);
+            protected abstract void ProcessValueMin(in TValue val);
+            protected abstract void ProcessValueMax(in TValue val);
         }
 
         private abstract class MinMaxAggregatorAcrossSlots<TItem, TStat> : StatAggregatorAcrossSlots<TItem, TStat>
         {
             protected readonly bool ReturnMax;
-            protected delegate void ProcessValueDelegate(ref TItem val);
+            protected delegate void ProcessValueDelegate(in TItem val);
             protected readonly ProcessValueDelegate ProcValueDelegate;
             // The count of the number of times ProcessValue has been called (used for tracking sparsity).
             private long _valuesProcessed;
@@ -355,20 +285,20 @@ namespace Microsoft.ML.Runtime.Data
                     ProcValueDelegate = ProcessValueMin;
             }
 
-            protected override void ProcessValue(ref TItem val)
+            protected override void ProcessValue(in TItem val)
             {
                 _valuesProcessed = _valuesProcessed + 1;
-                ProcValueDelegate(ref val);
+                ProcValueDelegate(in val);
             }
 
-            protected abstract void ProcessValueMin(ref TItem val);
-            protected abstract void ProcessValueMax(ref TItem val);
+            protected abstract void ProcessValueMin(in TItem val);
+            protected abstract void ProcessValueMax(in TItem val);
         }
 
         private abstract class MinMaxAggregatorBySlot<TItem, TStatItem> : StatAggregatorBySlot<TItem, TStatItem>
         {
             protected readonly bool ReturnMax;
-            protected delegate void ProcessValueDelegate(ref TItem val, int slot);
+            protected delegate void ProcessValueDelegate(in TItem val, int slot);
             protected readonly ProcessValueDelegate ProcValueDelegate;
             // The count of the number of times ProcessValue has been called on a specific slot (used for tracking sparsity).
             private readonly long[] _valuesProcessed;
@@ -387,11 +317,11 @@ namespace Microsoft.ML.Runtime.Data
                 _valuesProcessed = new long[type.VectorSize];
             }
 
-            protected override void ProcessValue(ref TItem val, int slot)
+            protected override void ProcessValue(in TItem val, int slot)
             {
                 Ch.Assert(0 <= slot && slot < Stat.Length);
                 _valuesProcessed[slot]++;
-                ProcValueDelegate(ref val, slot);
+                ProcValueDelegate(in val, slot);
             }
 
             protected long GetValuesProcessed(int slot)
@@ -399,8 +329,8 @@ namespace Microsoft.ML.Runtime.Data
                 return _valuesProcessed[slot];
             }
 
-            protected abstract void ProcessValueMin(ref TItem val, int slot);
-            protected abstract void ProcessValueMax(ref TItem val, int slot);
+            protected abstract void ProcessValueMin(in TItem val, int slot);
+            protected abstract void ProcessValueMax(in TItem val, int slot);
         }
 
         /// <summary>
@@ -503,17 +433,17 @@ namespace Microsoft.ML.Runtime.Data
                 Contracts.Assert(_cna >= 0);
             }
 
-            public void Update(long val, long valMax)
+            public void Update(long? val, long valMax)
             {
                 AssertValid(valMax);
-                Contracts.Assert(-valMax - 1 <= val && val <= valMax);
+                Contracts.Assert(!val.HasValue || -valMax <= val && val <= valMax);
 
-                if (val >= 0)
-                    IntUtils.Add(ref _sumHi, ref _sumLo, (ulong)val);
-                else if (val >= -valMax)
-                    IntUtils.Sub(ref _sumHi, ref _sumLo, (ulong)(-val));
-                else
+                if (!val.HasValue)
                     _cna++;
+                else if (val >= 0)
+                    IntUtils.Add(ref _sumHi, ref _sumLo, (ulong)val);
+                else
+                    IntUtils.Sub(ref _sumHi, ref _sumLo, (ulong)(-val));
 
                 AssertValid(valMax);
             }
@@ -618,7 +548,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                 }
 
-                protected override void ProcessRow(ref Single val)
+                protected override void ProcessRow(in Single val)
                 {
                     Stat.Update(val);
                 }
@@ -638,7 +568,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                 }
 
-                protected override void ProcessValue(ref Single val)
+                protected override void ProcessValue(in Single val)
                 {
                     Stat.Update(val);
                 }
@@ -658,7 +588,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                 }
 
-                protected override void ProcessValue(ref Single val, int slot)
+                protected override void ProcessValue(in Single val, int slot)
                 {
                     Ch.Assert(0 <= slot && slot < Stat.Length);
                     Stat[slot].Update(val);
@@ -685,13 +615,13 @@ namespace Microsoft.ML.Runtime.Data
                     Stat = ReturnMax ? Single.NegativeInfinity : Single.PositiveInfinity;
                 }
 
-                protected override void ProcessValueMin(ref Single val)
+                protected override void ProcessValueMin(in Single val)
                 {
                     if (val < Stat)
                         Stat = val;
                 }
 
-                protected override void ProcessValueMax(ref Single val)
+                protected override void ProcessValueMax(in Single val)
                 {
                     if (val > Stat)
                         Stat = val;
@@ -706,13 +636,13 @@ namespace Microsoft.ML.Runtime.Data
                     Stat = ReturnMax ? Single.NegativeInfinity : Single.PositiveInfinity;
                 }
 
-                protected override void ProcessValueMin(ref Single val)
+                protected override void ProcessValueMin(in Single val)
                 {
                     if (val < Stat)
                         Stat = val;
                 }
 
-                protected override void ProcessValueMax(ref Single val)
+                protected override void ProcessValueMax(in Single val)
                 {
                     if (val > Stat)
                         Stat = val;
@@ -724,7 +654,7 @@ namespace Microsoft.ML.Runtime.Data
                     if (ValueCount > (ulong)ValuesProcessed)
                     {
                         Single def = 0;
-                        ProcValueDelegate(ref def);
+                        ProcValueDelegate(in def);
                     }
                     return (Single)Stat;
                 }
@@ -740,14 +670,14 @@ namespace Microsoft.ML.Runtime.Data
                         Stat[i] = bound;
                 }
 
-                protected override void ProcessValueMin(ref Single val, int slot)
+                protected override void ProcessValueMin(in Single val, int slot)
                 {
                     Ch.Assert(0 <= slot && slot < Stat.Length);
                     if (val < Stat[slot])
                         Stat[slot] = val;
                 }
 
-                protected override void ProcessValueMax(ref Single val, int slot)
+                protected override void ProcessValueMax(in Single val, int slot)
                 {
                     Ch.Assert(0 <= slot && slot < Stat.Length);
                     if (val > Stat[slot])
@@ -762,7 +692,7 @@ namespace Microsoft.ML.Runtime.Data
                         if (GetValuesProcessed(slot) < RowCount)
                         {
                             Single def = 0;
-                            ProcValueDelegate(ref def, slot);
+                            ProcValueDelegate(in def, slot);
                         }
                     }
                     return Stat;
@@ -779,7 +709,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                 }
 
-                protected override void ProcessRow(ref Double val)
+                protected override void ProcessRow(in Double val)
                 {
                     Stat.Update(val);
                 }
@@ -797,7 +727,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                 }
 
-                protected override void ProcessValue(ref Double val)
+                protected override void ProcessValue(in Double val)
                 {
                     Stat.Update(val);
                 }
@@ -815,7 +745,7 @@ namespace Microsoft.ML.Runtime.Data
                 {
                 }
 
-                protected override void ProcessValue(ref Double val, int slot)
+                protected override void ProcessValue(in Double val, int slot)
                 {
                     Ch.Assert(0 <= slot && slot < Stat.Length);
                     Stat[slot].Update(val);
@@ -838,13 +768,13 @@ namespace Microsoft.ML.Runtime.Data
                     Stat = ReturnMax ? Double.NegativeInfinity : Double.PositiveInfinity;
                 }
 
-                protected override void ProcessValueMin(ref Double val)
+                protected override void ProcessValueMin(in Double val)
                 {
                     if (val < Stat)
                         Stat = val;
                 }
 
-                protected override void ProcessValueMax(ref Double val)
+                protected override void ProcessValueMax(in Double val)
                 {
                     if (val > Stat)
                         Stat = val;
@@ -859,13 +789,13 @@ namespace Microsoft.ML.Runtime.Data
                     Stat = ReturnMax ? Double.NegativeInfinity : Double.PositiveInfinity;
                 }
 
-                protected override void ProcessValueMin(ref Double val)
+                protected override void ProcessValueMin(in Double val)
                 {
                     if (val < Stat)
                         Stat = val;
                 }
 
-                protected override void ProcessValueMax(ref Double val)
+                protected override void ProcessValueMax(in Double val)
                 {
                     if (val > Stat)
                         Stat = val;
@@ -877,7 +807,7 @@ namespace Microsoft.ML.Runtime.Data
                     if (ValueCount > (ulong)ValuesProcessed)
                     {
                         Double def = 0;
-                        ProcValueDelegate(ref def);
+                        ProcValueDelegate(in def);
                     }
                     return Stat;
                 }
@@ -893,7 +823,7 @@ namespace Microsoft.ML.Runtime.Data
                         Stat[i] = bound;
                 }
 
-                protected override void ProcessValueMin(ref Double val, int slot)
+                protected override void ProcessValueMin(in Double val, int slot)
                 {
                     Ch.Assert(0 <= slot && slot < Stat.Length);
                     if (FloatUtils.IsFinite(val))
@@ -903,7 +833,7 @@ namespace Microsoft.ML.Runtime.Data
                     }
                 }
 
-                protected override void ProcessValueMax(ref Double val, int slot)
+                protected override void ProcessValueMax(in Double val, int slot)
                 {
                     Ch.Assert(0 <= slot && slot < Stat.Length);
                     if (FloatUtils.IsFinite(val))
@@ -921,805 +851,10 @@ namespace Microsoft.ML.Runtime.Data
                         if (GetValuesProcessed(slot) < RowCount)
                         {
                             Double def = 0;
-                            ProcValueDelegate(ref def, slot);
+                            ProcValueDelegate(in def, slot);
                         }
                     }
                     return Stat;
-                }
-            }
-        }
-
-        private static class I1
-        {
-            // Utilizes MeanStatInt for the mean aggregators of all IX types, TS, and DT.
-
-            private const long MaxVal = sbyte.MaxValue;
-
-            public sealed class MeanAggregatorOne : StatAggregator<DvInt1, MeanStatInt>
-            {
-                public MeanAggregatorOne(IChannel ch, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                }
-
-                protected override void ProcessRow(ref DvInt1 val)
-                {
-                    Stat.Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, RowCount, MaxVal);
-                    Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                    return (DvInt1)(sbyte)val;
-                }
-            }
-
-            public sealed class MeanAggregatorAcrossSlots : StatAggregatorAcrossSlots<DvInt1, MeanStatInt>
-            {
-                public MeanAggregatorAcrossSlots(IChannel ch, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                }
-
-                protected override void ProcessValue(ref DvInt1 val)
-                {
-                    Stat.Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, ValueCount, MaxVal);
-                    Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                    return (DvInt1)(sbyte)val;
-                }
-            }
-
-            public sealed class MeanAggregatorBySlot : StatAggregatorBySlot<DvInt1, MeanStatInt>
-            {
-                public MeanAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col)
-                    : base(ch, type, cursor, col)
-                {
-                }
-
-                protected override void ProcessValue(ref DvInt1 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    Stat[slot].Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    DvInt1[] stat = new DvInt1[Stat.Length];
-                    for (int slot = 0; slot < stat.Length; slot++)
-                    {
-                        long val = Stat[slot].GetCurrentValue(Ch, RowCount, MaxVal);
-                        Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                        stat[slot] = (DvInt1)(sbyte)val;
-                    }
-                    return stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorOne : MinMaxAggregatorOne<DvInt1, sbyte>
-            {
-                public MinMaxAggregatorOne(IChannel ch, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = (sbyte)(ReturnMax ? -MaxVal : MaxVal);
-                }
-
-                protected override void ProcessValueMin(ref DvInt1 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw < Stat && raw != DvInt1.RawNA)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt1 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    return (DvInt1)Stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorAcrossSlots : MinMaxAggregatorAcrossSlots<DvInt1, sbyte>
-            {
-                public MinMaxAggregatorAcrossSlots(IChannel ch, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = (sbyte)(ReturnMax ? -MaxVal : MaxVal);
-                }
-
-                protected override void ProcessValueMin(ref DvInt1 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw < Stat && raw != DvInt1.RawNA)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt1 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    // If sparsity occurred, fold in a zero.
-                    if (ValueCount > (ulong)ValuesProcessed)
-                    {
-                        var def = default(DvInt1);
-                        ProcValueDelegate(ref def);
-                    }
-                    return (DvInt1)Stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorBySlot : MinMaxAggregatorBySlot<DvInt1, sbyte>
-            {
-                public MinMaxAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, type, cursor, col, returnMax)
-                {
-                    sbyte bound = (sbyte)(ReturnMax ? -MaxVal : MaxVal);
-                    for (int i = 0; i < Stat.Length; i++)
-                        Stat[i] = bound;
-                }
-
-                protected override void ProcessValueMin(ref DvInt1 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = val.RawValue;
-                    if (raw < Stat[slot] && raw != DvInt1.RawNA)
-                        Stat[slot] = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt1 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = val.RawValue;
-                    if (raw > Stat[slot])
-                        Stat[slot] = raw;
-                }
-
-                public override object GetStat()
-                {
-                    DvInt1[] stat = new DvInt1[Stat.Length];
-                    // Account for defaults resulting from sparsity.
-                    for (int slot = 0; slot < Stat.Length; slot++)
-                    {
-                        if (GetValuesProcessed(slot) < RowCount)
-                        {
-                            var def = default(DvInt1);
-                            ProcValueDelegate(ref def, slot);
-                        }
-                        stat[slot] = (DvInt1)Stat[slot];
-                    }
-                    return stat;
-                }
-            }
-        }
-
-        private static class I2
-        {
-            private const long MaxVal = short.MaxValue;
-
-            public sealed class MeanAggregatorOne : StatAggregator<DvInt2, MeanStatInt>
-            {
-                public MeanAggregatorOne(IChannel ch, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                }
-
-                protected override void ProcessRow(ref DvInt2 val)
-                {
-                    Stat.Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, RowCount, MaxVal);
-                    Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                    return (DvInt2)(short)val;
-                }
-            }
-
-            public sealed class MeanAggregatorAcrossSlots : StatAggregatorAcrossSlots<DvInt2, MeanStatInt>
-            {
-                public MeanAggregatorAcrossSlots(IChannel ch, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                }
-
-                protected override void ProcessValue(ref DvInt2 val)
-                {
-                    Stat.Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, ValueCount, MaxVal);
-                    Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                    return (DvInt2)(short)val;
-                }
-            }
-
-            public sealed class MeanAggregatorBySlot : StatAggregatorBySlot<DvInt2, MeanStatInt>
-            {
-                public MeanAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col)
-                    : base(ch, type, cursor, col)
-                {
-                }
-
-                protected override void ProcessValue(ref DvInt2 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    Stat[slot].Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    DvInt2[] stat = new DvInt2[Stat.Length];
-                    for (int slot = 0; slot < stat.Length; slot++)
-                    {
-                        long val = Stat[slot].GetCurrentValue(Ch, RowCount, MaxVal);
-                        Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                        stat[slot] = (DvInt2)(short)val;
-                    }
-                    return stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorOne : MinMaxAggregatorOne<DvInt2, short>
-            {
-                public MinMaxAggregatorOne(IChannel ch, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = (short)(ReturnMax ? -MaxVal : MaxVal);
-                }
-
-                protected override void ProcessValueMin(ref DvInt2 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw < Stat && raw != DvInt2.RawNA)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt2 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    return (DvInt2)Stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorAcrossSlots : MinMaxAggregatorAcrossSlots<DvInt2, short>
-            {
-                public MinMaxAggregatorAcrossSlots(IChannel ch, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = (short)(ReturnMax ? -MaxVal : MaxVal);
-                }
-
-                protected override void ProcessValueMin(ref DvInt2 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw < Stat && raw != DvInt2.RawNA)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt2 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    // If sparsity occurred, fold in a zero.
-                    if (ValueCount > (ulong)ValuesProcessed)
-                    {
-                        var def = default(DvInt2);
-                        ProcValueDelegate(ref def);
-                    }
-                    return (DvInt2)Stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorBySlot : MinMaxAggregatorBySlot<DvInt2, short>
-            {
-                public MinMaxAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, type, cursor, col, returnMax)
-                {
-                    short bound = (short)(ReturnMax ? -MaxVal : MaxVal);
-                    for (int i = 0; i < Stat.Length; i++)
-                        Stat[i] = bound;
-                }
-
-                protected override void ProcessValueMin(ref DvInt2 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = val.RawValue;
-                    if (raw < Stat[slot] && raw != DvInt2.RawNA)
-                        Stat[slot] = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt2 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = val.RawValue;
-                    if (raw > Stat[slot])
-                        Stat[slot] = raw;
-                }
-
-                public override object GetStat()
-                {
-                    DvInt2[] stat = new DvInt2[Stat.Length];
-                    // Account for defaults resulting from sparsity.
-                    for (int slot = 0; slot < Stat.Length; slot++)
-                    {
-                        if (GetValuesProcessed(slot) < RowCount)
-                        {
-                            var def = default(DvInt2);
-                            ProcValueDelegate(ref def, slot);
-                        }
-                        stat[slot] = (DvInt2)Stat[slot];
-                    }
-                    return stat;
-                }
-            }
-        }
-
-        private static class I4
-        {
-            private const long MaxVal = int.MaxValue;
-
-            public sealed class MeanAggregatorOne : StatAggregator<DvInt4, MeanStatInt>
-            {
-                public MeanAggregatorOne(IChannel ch, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                }
-
-                protected override void ProcessRow(ref DvInt4 val)
-                {
-                    Stat.Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, RowCount, MaxVal);
-                    Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                    return (DvInt4)(int)val;
-                }
-            }
-
-            public sealed class MeanAggregatorAcrossSlots : StatAggregatorAcrossSlots<DvInt4, MeanStatInt>
-            {
-                public MeanAggregatorAcrossSlots(IChannel ch, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                }
-
-                protected override void ProcessValue(ref DvInt4 val)
-                {
-                    Stat.Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, ValueCount, MaxVal);
-                    Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                    return (DvInt4)(int)val;
-                }
-            }
-
-            public sealed class MeanAggregatorBySlot : StatAggregatorBySlot<DvInt4, MeanStatInt>
-            {
-                public MeanAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col)
-                    : base(ch, type, cursor, col)
-                {
-                }
-
-                protected override void ProcessValue(ref DvInt4 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    Stat[slot].Update(val.RawValue, MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    DvInt4[] stat = new DvInt4[Stat.Length];
-                    for (int slot = 0; slot < stat.Length; slot++)
-                    {
-                        long val = Stat[slot].GetCurrentValue(Ch, RowCount, MaxVal);
-                        Ch.Assert(-MaxVal - 1 <= val && val <= MaxVal);
-                        stat[slot] = (DvInt4)(int)val;
-                    }
-                    return stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorOne : MinMaxAggregatorOne<DvInt4, int>
-            {
-                public MinMaxAggregatorOne(IChannel ch, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = (int)(ReturnMax ? -MaxVal : MaxVal);
-                }
-
-                protected override void ProcessValueMin(ref DvInt4 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw < Stat && raw != DvInt4.RawNA)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt4 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    return (DvInt4)Stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorAcrossSlots : MinMaxAggregatorAcrossSlots<DvInt4, int>
-            {
-                public MinMaxAggregatorAcrossSlots(IChannel ch, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = (int)(ReturnMax ? -MaxVal : MaxVal);
-                }
-
-                protected override void ProcessValueMin(ref DvInt4 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw < Stat && raw != DvInt4.RawNA)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt4 val)
-                {
-                    var raw = val.RawValue;
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    // If sparsity occurred, fold in a zero.
-                    if (ValueCount > (ulong)ValuesProcessed)
-                    {
-                        var def = default(DvInt4);
-                        ProcValueDelegate(ref def);
-                    }
-                    return (DvInt4)Stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorBySlot : MinMaxAggregatorBySlot<DvInt4, int>
-            {
-                public MinMaxAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, type, cursor, col, returnMax)
-                {
-                    int bound = (int)(ReturnMax ? -MaxVal : MaxVal);
-                    for (int i = 0; i < Stat.Length; i++)
-                        Stat[i] = bound;
-                }
-
-                protected override void ProcessValueMin(ref DvInt4 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = val.RawValue;
-                    if (raw < Stat[slot] && raw != DvInt4.RawNA)
-                        Stat[slot] = raw;
-                }
-
-                protected override void ProcessValueMax(ref DvInt4 val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = val.RawValue;
-                    if (raw > Stat[slot])
-                        Stat[slot] = raw;
-                }
-
-                public override object GetStat()
-                {
-                    DvInt4[] stat = new DvInt4[Stat.Length];
-                    // Account for defaults resulting from sparsity.
-                    for (int slot = 0; slot < Stat.Length; slot++)
-                    {
-                        if (GetValuesProcessed(slot) < RowCount)
-                        {
-                            var def = default(DvInt4);
-                            ProcValueDelegate(ref def, slot);
-                        }
-                        stat[slot] = (DvInt4)Stat[slot];
-                    }
-                    return stat;
-                }
-            }
-        }
-
-        private static class Long
-        {
-            private const long MaxVal = long.MaxValue;
-
-            public sealed class MeanAggregatorOne<TItem> : StatAggregator<TItem, MeanStatInt>
-            {
-                // Converts between TItem and long.
-                private Converter<TItem> _converter;
-
-                public MeanAggregatorOne(IChannel ch, ColumnType type, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                    _converter = CreateConverter<TItem>(type);
-                }
-
-                protected override void ProcessRow(ref TItem val)
-                {
-                    Stat.Update(_converter.ToLong(val), MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, RowCount, MaxVal);
-                    return _converter.FromLong(val);
-                }
-            }
-
-            public sealed class MeanAggregatorAcrossSlots<TItem> : StatAggregatorAcrossSlots<TItem, MeanStatInt>
-            {
-                private Converter<TItem> _converter;
-
-                public MeanAggregatorAcrossSlots(IChannel ch, ColumnType type, IRowCursor cursor, int col)
-                    : base(ch, cursor, col)
-                {
-                    _converter = CreateConverter<TItem>(type);
-                }
-
-                protected override void ProcessValue(ref TItem val)
-                {
-                    Stat.Update(_converter.ToLong(val), MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    long val = Stat.GetCurrentValue(Ch, ValueCount, MaxVal);
-                    return _converter.FromLong(val);
-                }
-            }
-
-            public sealed class MeanAggregatorBySlot<TItem> : StatAggregatorBySlot<TItem, MeanStatInt>
-            {
-                private Converter<TItem> _converter;
-
-                public MeanAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col)
-                    : base(ch, type, cursor, col)
-                {
-                    _converter = CreateConverter<TItem>(type);
-                }
-
-                protected override void ProcessValue(ref TItem val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    Stat[slot].Update(_converter.ToLong(val), MaxVal);
-                }
-
-                public override object GetStat()
-                {
-                    TItem[] stat = new TItem[Stat.Length];
-                    for (int slot = 0; slot < stat.Length; slot++)
-                    {
-                        long val = Stat[slot].GetCurrentValue(Ch, RowCount, MaxVal);
-                        stat[slot] = _converter.FromLong(val);
-                    }
-                    return stat;
-                }
-            }
-
-            public sealed class MinMaxAggregatorOne<TItem> : MinMaxAggregatorOne<TItem, long>
-            {
-                private Converter<TItem> _converter;
-
-                public MinMaxAggregatorOne(IChannel ch, ColumnType type, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = ReturnMax ? -MaxVal : MaxVal;
-                    _converter = CreateConverter<TItem>(type);
-                }
-
-                protected override void ProcessValueMin(ref TItem val)
-                {
-                    var raw = _converter.ToLong(val);
-                    if (raw < Stat && -MaxVal <= raw)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref TItem val)
-                {
-                    var raw = _converter.ToLong(val);
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    return _converter.FromLong(Stat);
-                }
-            }
-
-            public sealed class MinMaxAggregatorAcrossSlots<TItem> : MinMaxAggregatorAcrossSlots<TItem, long>
-            {
-                private Converter<TItem> _converter;
-
-                public MinMaxAggregatorAcrossSlots(IChannel ch, ColumnType type, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, cursor, col, returnMax)
-                {
-                    Stat = ReturnMax ? -MaxVal : MaxVal;
-                    _converter = CreateConverter<TItem>(type);
-                }
-
-                protected override void ProcessValueMin(ref TItem val)
-                {
-                    var raw = _converter.ToLong(val);
-                    if (raw < Stat && -MaxVal <= raw)
-                        Stat = raw;
-                }
-
-                protected override void ProcessValueMax(ref TItem val)
-                {
-                    var raw = _converter.ToLong(val);
-                    if (raw > Stat)
-                        Stat = raw;
-                }
-
-                public override object GetStat()
-                {
-                    // If sparsity occurred, fold in a zero.
-                    if (ValueCount > (ulong)ValuesProcessed)
-                    {
-                        TItem def = default(TItem);
-                        ProcValueDelegate(ref def);
-                    }
-                    return _converter.FromLong(Stat);
-                }
-            }
-
-            public sealed class MinMaxAggregatorBySlot<TItem> : MinMaxAggregatorBySlot<TItem, long>
-            {
-                private Converter<TItem> _converter;
-
-                public MinMaxAggregatorBySlot(IChannel ch, ColumnType type, IRowCursor cursor, int col, bool returnMax)
-                    : base(ch, type, cursor, col, returnMax)
-                {
-                    long bound = ReturnMax ? -MaxVal : MaxVal;
-                    for (int i = 0; i < Stat.Length; i++)
-                        Stat[i] = bound;
-
-                    _converter = CreateConverter<TItem>(type);
-                }
-
-                protected override void ProcessValueMin(ref TItem val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = _converter.ToLong(val);
-                    if (raw < Stat[slot] && -MaxVal <= raw)
-                        Stat[slot] = raw;
-                }
-
-                protected override void ProcessValueMax(ref TItem val, int slot)
-                {
-                    Ch.Assert(0 <= slot && slot < Stat.Length);
-                    var raw = _converter.ToLong(val);
-                    if (raw > Stat[slot])
-                        Stat[slot] = raw;
-                }
-
-                public override object GetStat()
-                {
-                    TItem[] stat = new TItem[Stat.Length];
-                    // Account for defaults resulting from sparsity.
-                    for (int slot = 0; slot < Stat.Length; slot++)
-                    {
-                        if (GetValuesProcessed(slot) < RowCount)
-                        {
-                            var def = default(TItem);
-                            ProcValueDelegate(ref def, slot);
-                        }
-                        stat[slot] = _converter.FromLong(Stat[slot]);
-                    }
-                    return stat;
-                }
-            }
-
-            private static Converter<TItem> CreateConverter<TItem>(ColumnType type)
-            {
-                Contracts.AssertValue(type);
-                Contracts.Assert(typeof(TItem) == type.ItemType.RawType);
-                Converter converter;
-                if (type.ItemType.IsTimeSpan)
-                    converter = new TSConverter();
-                else if (type.ItemType.IsDateTime)
-                    converter = new DTConverter();
-                else
-                {
-                    Contracts.Assert(type.ItemType.RawKind == DataKind.I8);
-                    converter = new I8Converter();
-                }
-                return (Converter<TItem>)converter;
-            }
-
-            /// <summary>
-            /// The base class for conversions from types to long.
-            /// </summary>
-            private abstract class Converter
-            {
-            }
-
-            private abstract class Converter<T> : Converter
-            {
-                public abstract long ToLong(T val);
-                public abstract T FromLong(long val);
-            }
-
-            private sealed class I8Converter : Converter<DvInt8>
-            {
-                public override long ToLong(DvInt8 val)
-                {
-                    return val.RawValue;
-                }
-
-                public override DvInt8 FromLong(long val)
-                {
-                    Contracts.Assert(DvInt8.RawNA != val);
-                    return (DvInt8)val;
-                }
-            }
-
-            private sealed class TSConverter : Converter<DvTimeSpan>
-            {
-                public override long ToLong(DvTimeSpan val)
-                {
-                    return val.Ticks.RawValue;
-                }
-
-                public override DvTimeSpan FromLong(long val)
-                {
-                    Contracts.Assert(DvInt8.RawNA != val);
-                    return new DvTimeSpan(val);
-                }
-            }
-
-            private sealed class DTConverter : Converter<DvDateTime>
-            {
-                public override long ToLong(DvDateTime val)
-                {
-                    return val.Ticks.RawValue;
-                }
-
-                public override DvDateTime FromLong(long val)
-                {
-                    Contracts.Assert(0 <= val && val <= DvDateTime.MaxTicks);
-                    return new DvDateTime(val);
                 }
             }
         }

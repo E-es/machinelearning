@@ -12,22 +12,29 @@ namespace Microsoft.ML.Runtime.Model.Onnx
         /// Whether this object really is capable of saving itself as part of an ONNX
         /// pipeline. An implementor of this object might implement this interface,
         /// but still return <c>false</c> if there is some characteristic of this object
-        /// only detectable during runtime that would prevent its being savable. (E.g.,
+        /// only detectable during runtime that would prevent its being savable. (For example,
         /// it may wrap some other object that may or may not be savable.)
         /// </summary>
-        bool CanSaveOnnx { get; }
+        bool CanSaveOnnx(OnnxContext ctx);
     }
 
     /// <summary>
-    /// This data model component is savable as Onnx.
+    /// This component know how to save himself in ONNX format.
     /// </summary>
-    public interface ITransformCanSaveOnnx: ICanSaveOnnx, IDataTransform
+    public interface ISaveAsOnnx : ICanSaveOnnx
     {
         /// <summary>
         /// Save as ONNX.
         /// </summary>
         /// <param name="ctx">The ONNX program being built</param>
         void SaveAsOnnx(OnnxContext ctx);
+    }
+
+    /// <summary>
+    /// This data model component is savable as ONNX.
+    /// </summary>
+    public interface ITransformCanSaveOnnx : ISaveAsOnnx, IDataTransform
+    {
     }
 
     /// <summary>

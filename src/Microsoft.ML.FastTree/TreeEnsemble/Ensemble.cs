@@ -2,19 +2,20 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using Microsoft.ML.Runtime;
+using Microsoft.ML.Runtime.Data;
+using Microsoft.ML.Runtime.Internal.Utilities;
+using Microsoft.ML.Runtime.Model;
+using Microsoft.ML.Runtime.Model.Pfa;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Microsoft.ML.Runtime.Data;
-using Microsoft.ML.Runtime.Internal.Utilities;
-using Microsoft.ML.Runtime.Model;
-using Microsoft.ML.Runtime.Model.Pfa;
-using Newtonsoft.Json.Linq;
 
-namespace Microsoft.ML.Runtime.FastTree.Internal
+namespace Microsoft.ML.Trainers.FastTree.Internal
 {
     public class Ensemble
     {
@@ -71,6 +72,7 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
         public void AddTree(RegressionTree tree) => _trees.Add(tree);
         public void AddTreeAt(RegressionTree tree, int index) => _trees.Insert(index, tree);
         public void RemoveTree(int index) => _trees.RemoveAt(index);
+        // Note: Removes the range, including the index
         public void RemoveAfter(int index) => _trees.RemoveRange(index, NumTrees - index);
         public RegressionTree GetTreeAt(int index) => _trees[index];
 
@@ -193,7 +195,7 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
 
         protected int AppendComments(StringBuilder sb, string trainingParams)
         {
-            sb.AppendFormat("\n\n[Comments]\nC:0=Regression Tree Ensemble\nC:1=Generated using FastTree\nC:2=Created on {0}\n", DateTime.Now);
+            sb.AppendFormat("\n\n[Comments]\nC:0=Regression Tree Ensemble\nC:1=Generated using FastTree\nC:2=Created on {0}\n", DateTime.UtcNow);
 
             string[] trainingParamsList = trainingParams.Split(new char[] { '\n' });
             int i = 0;
@@ -250,15 +252,15 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
             return output;
         }
 
-        public double GetOutput(ref VBuffer<float> feat)
+        public double GetOutput(in VBuffer<float> feat)
         {
             double output = 0.0;
             for (int h = 0; h < NumTrees; h++)
-                output += _trees[h].GetOutput(ref feat);
+                output += _trees[h].GetOutput(in feat);
             return output;
         }
 
-        public float[] GetDistribution(ref VBuffer<float> feat, int sampleCount, out float[] weights)
+        public float[] GetDistribution(in VBuffer<float> feat, int sampleCount, out float[] weights)
         {
             var distribution = new float[sampleCount * NumTrees];
 
@@ -269,7 +271,7 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
 
             for (int h = 0; h < NumTrees; h++)
             {
-                ((QuantileRegressionTree)_trees[h]).LoadSampledLabels(ref feat, distribution,
+                ((QuantileRegressionTree)_trees[h]).LoadSampledLabels(in feat, distribution,
                     weights, sampleCount, h * sampleCount);
             }
             return distribution;
@@ -336,10 +338,10 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
 
         /// <summary>
         /// Returns a vector of feature contributions for a given example.
-        /// <paramref name="builder"/> is used as a buffer to accumulate the contributions across trees. 
+        /// <paramref name="builder"/> is used as a buffer to accumulate the contributions across trees.
         /// If <paramref name="builder"/> is null, it will be created, otherwise it will be reused.
         /// </summary>
-        internal void GetFeatureContributions(ref VBuffer<float> features, ref VBuffer<float> contribs, ref BufferBuilder<float> builder)
+        internal void GetFeatureContributions(in VBuffer<float> features, ref VBuffer<float> contribs, ref BufferBuilder<float> builder)
         {
             // The feature contributions are equal to the sum of per-tree contributions.
 
@@ -349,7 +351,7 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
             builder.Reset(features.Length, false);
 
             foreach (var tree in _trees)
-                tree.AppendFeatureContributions(ref features, builder);
+                tree.AppendFeatureContributions(in features, builder);
 
             builder.GetResult(ref contribs);
         }
@@ -396,8 +398,8 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
     /// </summary>
     public sealed class FeaturesToContentMap
     {
-        private readonly VBuffer<DvText> _content;
-        private readonly VBuffer<DvText> _names;
+        private readonly VBuffer<ReadOnlyMemory<char>> _content;
+        private readonly VBuffer<ReadOnlyMemory<char>> _names;
 
         public int Count => _names.Length;
 
@@ -418,15 +420,15 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
             if (sch.HasSlotNames(feat.Index, feat.Type.ValueCount))
                 sch.GetMetadata(MetadataUtils.Kinds.SlotNames, feat.Index, ref _names);
             else
-                _names = VBufferUtils.CreateEmpty<DvText>(feat.Type.ValueCount);
+                _names = VBufferUtils.CreateEmpty<ReadOnlyMemory<char>>(feat.Type.ValueCount);
 #if !CORECLR
             var type = sch.GetMetadataTypeOrNull(BingBinLoader.IniContentMetadataKind, feat.Index);
             if (type != null && type.IsVector && type.VectorSize == feat.Type.ValueCount && type.ItemType.IsText)
                 sch.GetMetadata(BingBinLoader.IniContentMetadataKind, feat.Index, ref _content);
             else
-                _content = VBufferUtils.CreateEmpty<DvText>(feat.Type.ValueCount);
+                _content = VBufferUtils.CreateEmpty<ReadOnlyMemory<char>>(feat.Type.ValueCount);
 #else
-                _content = VBufferUtils.CreateEmpty<DvText>(feat.Type.ValueCount);
+            _content = VBufferUtils.CreateEmpty<ReadOnlyMemory<char>>(feat.Type.ValueCount);
 #endif
             Contracts.Assert(_names.Length == _content.Length);
         }
@@ -434,15 +436,15 @@ namespace Microsoft.ML.Runtime.FastTree.Internal
         public string GetName(int ifeat)
         {
             Contracts.Assert(0 <= ifeat && ifeat < Count);
-            DvText name = _names.GetItemOrDefault(ifeat);
-            return name.HasChars ? name.ToString() : string.Format("f{0}", ifeat);
+            ReadOnlyMemory<char> name = _names.GetItemOrDefault(ifeat);
+            return !name.IsEmpty ? name.ToString() : string.Format("f{0}", ifeat);
         }
 
         public string GetContent(int ifeat)
         {
             Contracts.Assert(0 <= ifeat && ifeat < Count);
-            DvText content = _content.GetItemOrDefault(ifeat);
-            return content.HasChars ? content.ToString() : DatasetUtils.GetDefaultTransform(GetName(ifeat));
+            ReadOnlyMemory<char> content = _content.GetItemOrDefault(ifeat);
+            return !content.IsEmpty ? content.ToString() : DatasetUtils.GetDefaultTransform(GetName(ifeat));
         }
     }
 }

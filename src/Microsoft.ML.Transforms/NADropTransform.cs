@@ -21,9 +21,7 @@ using Microsoft.ML.Runtime.Model;
 
 namespace Microsoft.ML.Runtime.Data
 {
-    /// <summary>
-    /// Transform to drop NAs from vector columns.
-    /// </summary>
+    /// <include file='doc.xml' path='doc/members/member[@name="NADrop"]'/>
     public sealed class NADropTransform : OneToOneTransformBase
     {
         public sealed class Arguments : TransformInputBase
@@ -61,13 +59,26 @@ namespace Microsoft.ML.Runtime.Data
                 verWrittenCur: 0x00010001, // Initial
                 verReadableCur: 0x00010001,
                 verWeCanReadBack: 0x00010001,
-                loaderSignature: LoaderSignature);
+                loaderSignature: LoaderSignature,
+                loaderAssemblyName: typeof(NADropTransform).Assembly.FullName);
         }
 
         private const string RegistrationName = "DropNAs";
 
         // The isNA delegates, parallel to Infos.
         private readonly Delegate[] _isNAs;
+
+        /// <summary>
+        /// Convenience constructor for public facing API.
+        /// </summary>
+        /// <param name="env">Host Environment.</param>
+        /// <param name="input">Input <see cref="IDataView"/>. This is the output from previous transform or loader.</param>
+        /// <param name="name">Name of the output column.</param>
+        /// <param name="source">Name of the column to be transformed. If this is null '<paramref name="name"/>' will be used.</param>
+        public NADropTransform(IHostEnvironment env, IDataView input, string name, string source = null)
+            : this(env, new Arguments() { Column = new[] { new Column() { Source = source ?? name, Name = name } } }, input)
+        {
+        }
 
         public NADropTransform(IHostEnvironment env, Arguments args, IDataView input)
             : base(Contracts.CheckRef(env, nameof(env)), RegistrationName, env.CheckRef(args, nameof(args)).Column, input, TestType)
@@ -90,7 +101,7 @@ namespace Microsoft.ML.Runtime.Data
                     MetadataUtils.Kinds.IsNormalized, MetadataUtils.Kinds.KeyValues))
                 {
                     // Output does not have missings.
-                    bldr.AddPrimitive(MetadataUtils.Kinds.HasMissingValues, BoolType.Instance, DvBool.False);
+                    bldr.AddPrimitive(MetadataUtils.Kinds.HasMissingValues, BoolType.Instance, false);
                 }
             }
             md.Seal();
@@ -127,7 +138,7 @@ namespace Microsoft.ML.Runtime.Data
         private static string TestType<T>(ColumnType type)
         {
             Contracts.Assert(type.ItemType.RawType == typeof(T));
-            RefPredicate<T> isNA;
+            InPredicate<T> isNA;
             if (!Conversions.Instance.TryGetIsNAPredicate(type.ItemType, out isNA))
             {
                 return string.Format("Type '{0}' is not supported by {1} since it doesn't have an NA value",
@@ -191,9 +202,9 @@ namespace Microsoft.ML.Runtime.Data
         {
             var srcGetter = GetSrcGetter<VBuffer<TDst>>(input, iinfo);
             var buffer = default(VBuffer<TDst>);
-            var isNA = (RefPredicate<TDst>)_isNAs[iinfo];
+            var isNA = (InPredicate<TDst>)_isNAs[iinfo];
             var def = default(TDst);
-            if (isNA(ref def))
+            if (isNA(in def))
             {
                 // Case I: NA equals the default value.
                 return
@@ -205,7 +216,7 @@ namespace Microsoft.ML.Runtime.Data
             }
 
             // Case II: NA is different form default value.
-            Host.Assert(!isNA(ref def));
+            Host.Assert(!isNA(in def));
             return
                 (ref VBuffer<TDst> value) =>
                 {
@@ -214,14 +225,14 @@ namespace Microsoft.ML.Runtime.Data
                 };
         }
 
-        private void DropNAsAndDefaults<TDst>(ref VBuffer<TDst> src, ref VBuffer<TDst> dst, RefPredicate<TDst> isNA)
+        private void DropNAsAndDefaults<TDst>(ref VBuffer<TDst> src, ref VBuffer<TDst> dst, InPredicate<TDst> isNA)
         {
             Host.AssertValue(isNA);
 
             int newCount = 0;
             for (int i = 0; i < src.Count; i++)
             {
-                if (!isNA(ref src.Values[i]))
+                if (!isNA(in src.Values[i]))
                     newCount++;
             }
             Host.Assert(newCount <= src.Count);
@@ -251,7 +262,7 @@ namespace Microsoft.ML.Runtime.Data
             // Densifying sparse vectors since default value equals NA and hence should be dropped.
             for (int i = 0; i < src.Count; i++)
             {
-                if (!isNA(ref src.Values[i]))
+                if (!isNA(in src.Values[i]))
                     values[iDst++] = src.Values[i];
             }
             Host.Assert(iDst == newCount);
@@ -259,14 +270,14 @@ namespace Microsoft.ML.Runtime.Data
             dst = new VBuffer<TDst>(newCount, values, dst.Indices);
         }
 
-        private void DropNAs<TDst>(ref VBuffer<TDst> src, ref VBuffer<TDst> dst, RefPredicate<TDst> isNA)
+        private void DropNAs<TDst>(ref VBuffer<TDst> src, ref VBuffer<TDst> dst, InPredicate<TDst> isNA)
         {
             Host.AssertValue(isNA);
 
             int newCount = 0;
             for (int i = 0; i < src.Count; i++)
             {
-                if (!isNA(ref src.Values[i]))
+                if (!isNA(in src.Values[i]))
                     newCount++;
             }
             Host.Assert(newCount <= src.Count);
@@ -292,7 +303,7 @@ namespace Microsoft.ML.Runtime.Data
             {
                 for (int i = 0; i < src.Count; i++)
                 {
-                    if (!isNA(ref src.Values[i]))
+                    if (!isNA(in src.Values[i]))
                     {
                         values[iDst] = src.Values[i];
                         iDst++;
@@ -310,7 +321,7 @@ namespace Microsoft.ML.Runtime.Data
                 int offset = 0;
                 for (int i = 0; i < src.Count; i++)
                 {
-                    if (!isNA(ref src.Values[i]))
+                    if (!isNA(in src.Values[i]))
                     {
                         values[iDst] = src.Values[i];
                         indices[iDst] = src.Indices[i] - offset;
